@@ -10,6 +10,7 @@ interface IHookRegistry {
     error NotAuthorized();
     error InvalidDeposit();
     error HookNotRegistered();
+    error HookAlreadyRegistered();
 
     // Events
     event HookRegistered(address indexed hook, address indexed developer, uint256 deposit);
@@ -17,6 +18,8 @@ interface IHookRegistry {
     event RiskScoreUpdated(address indexed hook, uint256 score);
     event OperatorRegistered(address indexed operator);
     event OperatorRemoved(address indexed operator);
+
+    function setVault(address _vault) external;
 
     // Hook Management
     function registerHook(address hook, uint256 usdcAmount) external;

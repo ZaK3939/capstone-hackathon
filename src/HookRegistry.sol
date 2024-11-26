@@ -19,8 +19,9 @@ contract HookRegistry is IHookRegistry, Ownable {
     }
 
     IERC20 public immutable USDC;
-    IInsuranceVault public immutable insuranceVault;
+    IInsuranceVault public vault;
     uint256 public constant MINIMUM_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
+    bool public isVaultSet;
 
     mapping(address => HookInfo) public hooks;
     mapping(address => bool) public operators;
@@ -28,16 +29,23 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     constructor(address _usdc, address _insuranceVault) Ownable(msg.sender) {
         USDC = IERC20(_usdc);
-        insuranceVault = IInsuranceVault(_insuranceVault);
+        vault = IInsuranceVault(_insuranceVault);
+    }
+
+    // Add setVault function
+    function setVault(address _vault) external onlyOwner {
+        require(!isVaultSet, "Vault already set");
+        vault = IInsuranceVault(_vault);
+        isVaultSet = true;
     }
 
     // Hook Management
     function registerHook(address hook, uint256 usdcAmount) external {
         if (usdcAmount < MINIMUM_DEPOSIT) revert InvalidDeposit();
-        if (hooks[hook].developer != address(0)) revert HookNotRegistered();
+        if (hooks[hook].developer != address(0)) revert HookAlreadyRegistered();
 
-        // Transfer USDC from developer
-        USDC.transferFrom(msg.sender, address(this), usdcAmount);
+        // Transfer USDC from developer to registry
+        require(USDC.transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
 
         // Initialize hook info
         HookInfo storage info = hooks[hook];
@@ -46,16 +54,19 @@ contract HookRegistry is IHookRegistry, Ownable {
         info.isActive = true;
         info.riskScore = 0;
 
-        // Send deposit to insurance vault
-        USDC.approve(address(insuranceVault), usdcAmount);
-        insuranceVault.depositUSDC(usdcAmount);
+        // First register hook in vault
+        vault.registerHook(hook);
+
+        // Then deposit USDC to vault
+        USDC.approve(address(vault), usdcAmount);
+        vault.depositUSDC(hook, usdcAmount);
 
         emit HookRegistered(hook, msg.sender, usdcAmount);
     }
 
     function pauseHook(address hook, PoolId poolId) external {
         if (!isOperatorApproved(msg.sender)) revert NotAuthorized();
-        require(hooks[hook].isActive, "Hook not active");
+        if (hooks[hook].developer == address(0)) revert HookNotRegistered();
 
         hooks[hook].isPaused[poolId] = true;
         IInsuredHook(hook).pause(poolId);
@@ -65,6 +76,7 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     function updateRiskScore(address hook, uint256 score) external {
         if (!isOperatorApproved(msg.sender)) revert NotAuthorized();
+        if (hooks[hook].developer == address(0)) revert HookNotRegistered();
         hooks[hook].riskScore = score;
         emit RiskScoreUpdated(hook, score);
     }

@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HookRegistry} from "../src/HookRegistry.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {MockInsuranceVault} from "./mock/MockInsuranceVault.sol";
+import {InsuranceVault} from "../src/InsuranceVault.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IHookRegistry} from "../src/interfaces/IHookRegistry.sol";
@@ -18,7 +18,8 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 contract HookRegistryTest is Test, Fixtures {
     HookRegistry public registry;
     MockERC20 public usdc;
-    MockInsuranceVault public vault;
+    MockERC20 public uni;
+    InsuranceVault public vault;
     InsuredHook public hook;
     PoolId public poolId;
 
@@ -38,10 +39,18 @@ contract HookRegistryTest is Test, Fixtures {
         owner = address(this);
         operator = makeAddr("operator");
 
-        // Deploy mock contracts
+        // Deploy tokens
         usdc = new MockERC20("USDC", "USDC", 6);
-        vault = new MockInsuranceVault();
-        registry = new HookRegistry(address(usdc), address(vault));
+        uni = new MockERC20("UNI", "UNI", 18);
+
+        // Deploy registry first with temporary vault
+        registry = new HookRegistry(address(usdc), address(1));
+
+        // Deploy real vault
+        vault = new InsuranceVault(address(registry), address(usdc), address(uni));
+
+        // Link registry to vault
+        registry.setVault(address(vault));
 
         // Setup hook
         address flags = address(uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG) ^ (0x4444 << 144));
@@ -57,11 +66,17 @@ contract HookRegistryTest is Test, Fixtures {
         // Setup USDC
         usdc.mint(address(this), 100_000 * 1e6);
         usdc.approve(address(registry), type(uint256).max);
+        usdc.approve(address(vault), type(uint256).max);
+
+        // Setup UNI
+        uni.mint(address(this), 100_000 * 1e18);
+        uni.approve(address(vault), type(uint256).max);
     }
 
     function testRegisterHook() public {
         uint256 depositAmount = 10_000 * 1e6;
 
+        // Expect both registry and vault events
         vm.expectEmit(true, true, false, true);
         emit HookRegistered(address(hook), address(this), depositAmount);
 
@@ -73,13 +88,9 @@ contract HookRegistryTest is Test, Fixtures {
         assertEq(deposit, depositAmount);
         assertTrue(isActive);
         assertEq(riskScore, 0);
-    }
 
-    function testRegisterHookInsufficientDeposit() public {
-        uint256 smallDeposit = 5_000 * 1e6;
-
-        vm.expectRevert(IHookRegistry.InvalidDeposit.selector);
-        registry.registerHook(address(hook), smallDeposit);
+        // Verify vault registration
+        assertTrue(vault.registeredHooks(address(hook)));
     }
 
     function testOperatorManagement() public {

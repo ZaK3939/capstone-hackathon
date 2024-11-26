@@ -20,8 +20,8 @@ import {EasyPosm} from "./utils/EasyPosm.sol";
 
 import {InsuredHook} from "../src/InsuredHook.sol";
 import {HookRegistry} from "../src/HookRegistry.sol";
+import {InsuranceVault} from "../src/InsuranceVault.sol";
 
-import {MockInsuranceVault} from "./mock/MockInsuranceVault.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
 import {IInsuredHook} from "../src/interfaces/IInsuredHook.sol";
 
@@ -33,8 +33,9 @@ contract InsuredHookTest is Test, Fixtures {
     InsuredHook hook;
     PoolId poolId;
     HookRegistry registry;
-    MockInsuranceVault vault;
+    InsuranceVault vault;
     MockERC20 usdc;
+    MockERC20 public uni;
     uint256 tokenId;
     int24 tickLower;
     int24 tickUpper;
@@ -45,8 +46,10 @@ contract InsuredHookTest is Test, Fixtures {
         deployAndApprovePosm(manager);
 
         usdc = new MockERC20("USDC", "USDC", 6);
-        registry = new HookRegistry(address(usdc), address(vault));
-        vault = new MockInsuranceVault();
+        registry = new HookRegistry(address(usdc), address(this)); // Temporary vault address
+        vault = new InsuranceVault(address(registry), address(usdc), address(uni));
+        // Update registry's vault address
+        registry.setVault(address(vault));
 
         address flags = address(uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG) ^ (0x4444 << 144));
         bytes memory constructorArgs = abi.encode(manager, address(registry), address(vault));
