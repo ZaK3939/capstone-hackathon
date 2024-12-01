@@ -25,10 +25,11 @@ contract InsuranceVault is IInsuranceVault, Ownable {
     mapping(address => mapping(address => uint256)) public hookStakes; // hook => staker => amount
     VaultInfo public vaultInfo;
 
-    constructor(address _registry, address _usdc, address _uni) Ownable(msg.sender) {
+    constructor(address _registry, address _usdc, address _uni) {
         registry = IHookRegistry(_registry);
         USDC = IERC20(_usdc);
         UNI = IERC20(_uni);
+        _transferOwnership(msg.sender);
     }
 
     // Hook Registration

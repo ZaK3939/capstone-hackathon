@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IInsuredHook} from "./interfaces/IInsuredHook.sol";
 import {IInsuranceVault} from "./interfaces/IInsuranceVault.sol";
 import {IHookRegistry} from "./interfaces/IHookRegistry.sol";
+import {IUniGuardServiceManager} from "uniguard-avs/contracts/src/interfaces/IUniGuardServiceManager.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract HookRegistry is IHookRegistry, Ownable {
@@ -20,6 +21,7 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     IERC20 public immutable USDC;
     IInsuranceVault public vault;
+    IUniGuardServiceManager public serviceManager;
     uint256 public constant MINIMUM_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
     bool public isVaultSet;
 
@@ -27,9 +29,19 @@ contract HookRegistry is IHookRegistry, Ownable {
     mapping(address => bool) public operators;
     uint256 public operatorCount;
 
-    constructor(address _usdc, address _insuranceVault) Ownable(msg.sender) {
+    constructor(address _usdc, address _insuranceVault) {
         USDC = IERC20(_usdc);
         vault = IInsuranceVault(_insuranceVault);
+        _transferOwnership(msg.sender);
+    }
+
+    bool public isServiceManagerSet;
+
+    function setServiceManager(address _serviceManager) external {
+        require(!isServiceManagerSet, "ServiceManager already set");
+        require(_serviceManager != address(0), "Invalid ServiceManager address");
+        serviceManager = IUniGuardServiceManager(_serviceManager);
+        isServiceManagerSet = true;
     }
 
     // Add setVault function
