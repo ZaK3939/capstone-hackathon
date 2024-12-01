@@ -49,24 +49,23 @@ contract InsuredHook is BaseHook, IInsuredHook {
         });
     }
 
-    function beforeSwap(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata data
-    ) external override returns (bytes4, BeforeSwapDelta, uint24) {
+    function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata)
+        external
+        override
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
         if (isPaused[key.toId()]) revert PoolPaused();
-        if (registry.isPoolPaused(address(this), key.toId())) revert PausedByRegistry();
+        // if (registry.isPoolPaused(address(this), key.toId())) revert PausedByRegistry();
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     function afterSwap(
-        address sender,
+        address,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         BalanceDelta delta,
-        bytes calldata data
+        bytes calldata
     ) external override returns (bytes4, int128) {
         uint256 volume = calculateSwapVolume(params, delta);
         swapVolumes[key.toId()] += volume;

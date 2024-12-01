@@ -14,7 +14,7 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {Constants} from "v4-core/src/../test/utils/Constants.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
-import {Counter} from "../src/Counter.sol";
+import {InsuredHook} from "../src/InsuredHook.sol";
 import {HookMiner} from "../test/utils/HookMiner.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
@@ -24,6 +24,8 @@ import {DeployPermit2} from "../test/utils/forks/DeployPermit2.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {HookRegistry} from "../src/HookRegistry.sol";
+import {InsuranceVault} from "../src/InsuranceVault.sol";
 
 /// @notice Forge script for deploying v4 & hooks to **anvil**
 /// @dev This script only works on an anvil RPC because v4 exceeds bytecode limits
@@ -37,23 +39,42 @@ contract CounterScript is Script, DeployPermit2 {
     function run() public {
         vm.broadcast();
         IPoolManager manager = deployPoolManager();
+        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
+        MockERC20 uni = new MockERC20("UNI", "UNI", 18);
+
+        HookRegistry registry = new HookRegistry(address(usdc), address(this));
+        InsuranceVault vault = new InsuranceVault(address(registry), address(usdc), address(uni));
+        registry.setVault(address(vault));
 
         // hook contracts must have specific flags encoded in the address
-        uint160 permissions = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
-        );
+        // uint160 permissions = uint160(
+        //     Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
+        //         | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+        // );
+        uint160 permissions = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG);
 
         // Mine a salt that will produce a hook address with the correct permissions
-        (address hookAddress, bytes32 salt) =
-            HookMiner.find(CREATE2_DEPLOYER, permissions, type(Counter).creationCode, abi.encode(address(manager)));
-
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            CREATE2_DEPLOYER,
+            permissions,
+            type(InsuredHook).creationCode,
+            abi.encode(manager, address(registry), address(vault))
+        );
+        console2.log("Hook address: %s", hookAddress);
         // ----------------------------- //
         // Deploy the hook using CREATE2 //
         // ----------------------------- //
         vm.broadcast();
-        Counter counter = new Counter{salt: salt}(manager);
-        require(address(counter) == hookAddress, "CounterScript: hook address mismatch");
+        InsuredHook hook = new InsuredHook{salt: salt}(manager, address(registry), address(vault));
+
+        console.log("InsuredHook address: %s", address(hook));
+        require(address(hook) == hookAddress, "CounterScript: hook address mismatch");
+
+        usdc.mint(address(this), 100_000 * 1e6);
+        usdc.approve(address(registry), type(uint256).max);
+        usdc.approve(address(vault), type(uint256).max);
+        uint256 depositAmount = 10_000 * 1e6;
+        registry.registerHook(address(hook), depositAmount);
 
         // Additional helpers for interacting with the pool
         vm.startBroadcast();
@@ -63,7 +84,8 @@ contract CounterScript is Script, DeployPermit2 {
 
         // test the lifecycle (create pool, add liquidity, swap)
         vm.startBroadcast();
-        testLifecycle(manager, address(counter), posm, lpRouter, swapRouter);
+        console2.log("Testing lifecycle");
+        testLifecycle(manager, address(hook), posm, lpRouter, swapRouter);
         vm.stopBroadcast();
     }
 
@@ -85,7 +107,9 @@ contract CounterScript is Script, DeployPermit2 {
 
     function deployPosm(IPoolManager poolManager) public returns (IPositionManager) {
         anvilPermit2();
-        return IPositionManager(new PositionManager(poolManager, permit2, 300_000, IPositionDescriptor(address(0)), IWETH9(address(0))));
+        return IPositionManager(
+            new PositionManager(poolManager, permit2, 300_000, IPositionDescriptor(address(0)), IWETH9(address(0)))
+        );
     }
 
     function approvePosmCurrency(IPositionManager posm, Currency currency) internal {

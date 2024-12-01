@@ -33,7 +33,7 @@ contract HookRegistry is IHookRegistry, Ownable {
     }
 
     // Add setVault function
-    function setVault(address _vault) external onlyOwner {
+    function setVault(address _vault) external {
         require(!isVaultSet, "Vault already set");
         vault = IInsuranceVault(_vault);
         isVaultSet = true;
