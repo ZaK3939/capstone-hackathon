@@ -14,6 +14,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Fixtures} from "./utils/Fixtures.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {MockServiceManager} from "./mock/MockServiceManager.sol";
 
 contract HookRegistryTest is Test, Fixtures {
     HookRegistry public registry;
@@ -22,14 +23,17 @@ contract HookRegistryTest is Test, Fixtures {
     InsuranceVault public vault;
     InsuredHook public hook;
     PoolId public poolId;
+    MockServiceManager public mockServiceManager;
 
     address public owner;
-    address public operator;
 
     event HookRegistered(address indexed hook, address indexed developer, uint256 deposit);
-    event OperatorRegistered(address indexed operator);
-    event OperatorRemoved(address indexed operator);
-    event HookPaused(address indexed hook, PoolId indexed poolId);
+    event HookActivated(address indexed hook);
+    event HookDeactivated(address indexed hook);
+    event HookPaused(address indexed hook);
+    event HookUnpaused(address indexed hook);
+    event RiskScoreUpdated(address indexed hook, uint256 score);
+    event ServiceManagerSet(address indexed serviceManager);
 
     function setUp() public {
         // Setup base contracts
@@ -37,7 +41,6 @@ contract HookRegistryTest is Test, Fixtures {
         deployMintAndApprove2Currencies();
 
         owner = address(this);
-        operator = makeAddr("operator");
 
         // Deploy tokens
         usdc = new MockERC20("USDC", "USDC", 6);
@@ -45,6 +48,10 @@ contract HookRegistryTest is Test, Fixtures {
 
         // Deploy registry first with temporary vault
         registry = new HookRegistry(address(usdc), address(1));
+
+        // Deploy mock service manager and set it
+        mockServiceManager = new MockServiceManager();
+        registry.setServiceManager(address(mockServiceManager));
 
         // Deploy real vault
         vault = new InsuranceVault(address(registry), address(usdc), address(uni));
@@ -76,69 +83,90 @@ contract HookRegistryTest is Test, Fixtures {
     function testRegisterHook() public {
         uint256 depositAmount = 10_000 * 1e6;
 
-        // Expect both registry and vault events
+        // Register hook
         vm.expectEmit(true, true, false, true);
         emit HookRegistered(address(hook), address(this), depositAmount);
-
         registry.registerHook(address(hook), depositAmount);
 
-        (address developer, uint256 deposit, bool isActive, uint256 riskScore) = registry.getHookInfo(address(hook));
+        (address developer, uint256 deposit, bool isActive, bool isPaused, uint256 riskScore) =
+            registry.getHookInfo(address(hook));
 
         assertEq(developer, address(this));
         assertEq(deposit, depositAmount);
-        assertTrue(isActive);
+        assertFalse(isActive);
+        assertFalse(isPaused);
         assertEq(riskScore, 0);
 
         // Verify vault registration
         assertTrue(vault.registeredHooks(address(hook)));
     }
 
-    function testOperatorManagement() public {
-        // Register operator
-        vm.expectEmit(true, false, false, true);
-        emit OperatorRegistered(operator);
-        registry.registerOperator(operator);
-        assertTrue(registry.isOperatorApproved(operator));
+    function testSetServiceManager() public {
+        // Deploy new registry for this test
+        HookRegistry newRegistry = new HookRegistry(address(usdc), address(1));
+        address newServiceManager = makeAddr("newServiceManager");
 
-        // Remove operator
-        vm.expectEmit(true, false, false, true);
-        emit OperatorRemoved(operator);
-        registry.removeOperator(operator);
-        assertFalse(registry.isOperatorApproved(operator));
+        // Initial state check
+        assertFalse(newRegistry.isServiceManagerSet());
+
+        // Test setting service manager
+        vm.expectEmit(true, false, false, false);
+        emit ServiceManagerSet(newServiceManager);
+        newRegistry.setServiceManager(newServiceManager);
+
+        // Verify service manager is set
+        assertTrue(newRegistry.isServiceManagerSet());
+        assertEq(address(newRegistry.serviceManager()), newServiceManager);
     }
 
     function testPauseHook() public {
         // Register hook first
         registry.registerHook(address(hook), 10_000 * 1e6);
 
-        // Register operator
-        registry.registerOperator(operator);
+        // Pause hook using mock service manager
+        vm.prank(address(mockServiceManager));
+        vm.expectEmit(true, false, false, true);
+        emit HookPaused(address(hook));
+        registry.pauseHook(address(hook));
 
-        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
-
-        // Only operator can pause
-        vm.prank(operator);
-        registry.pauseHook(address(hook), poolId);
-
-        assertTrue(registry.isPoolPaused(address(hook), poolId));
-    }
-
-    function testPauseHookUnauthorized() public {
-        registry.registerHook(address(hook), 10_000 * 1e6);
-        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
-
-        vm.prank(makeAddr("unauthorized"));
-        vm.expectRevert(IHookRegistry.NotAuthorized.selector);
-        registry.pauseHook(address(hook), poolId);
+        assertTrue(registry.isHookPaused(address(hook)));
     }
 
     function testUpdateRiskScore() public {
+        // Register hook first
         registry.registerHook(address(hook), 10_000 * 1e6);
-        registry.registerOperator(operator);
 
-        vm.prank(operator);
+        // Update risk score using mock service manager
+        vm.prank(address(mockServiceManager));
+        vm.expectEmit(true, false, false, true);
+        emit RiskScoreUpdated(address(hook), 75);
         registry.updateRiskScore(address(hook), 75);
 
         assertEq(registry.getRiskScore(address(hook)), 75);
+    }
+
+    function testPauseUnregisteredHook() public {
+        vm.prank(address(mockServiceManager));
+        vm.expectRevert(IHookRegistry.HookNotRegistered.selector);
+        registry.pauseHook(address(hook));
+    }
+
+    function testUpdateRiskScoreUnregisteredHook() public {
+        vm.prank(address(mockServiceManager));
+        vm.expectRevert(IHookRegistry.HookNotRegistered.selector);
+        registry.updateRiskScore(address(hook), 75);
+    }
+
+    function testUnauthorizedServiceManagerSet() public {
+        address unauthorized = makeAddr("unauthorized");
+        vm.prank(unauthorized);
+        vm.expectRevert("Ownable: caller is not the owner");
+        registry.setServiceManager(address(mockServiceManager));
+    }
+
+    function testSetServiceManagerTwice() public {
+        address newServiceManager = makeAddr("newServiceManager");
+        vm.expectRevert("ServiceManager already set");
+        registry.setServiceManager(newServiceManager);
     }
 }

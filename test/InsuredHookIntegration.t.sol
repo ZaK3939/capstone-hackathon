@@ -110,7 +110,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         registry.registerHook(address(hook), INITIAL_DEPOSIT);
 
         // Verify registration
-        (address developer, uint256 deposit, bool active, uint256 riskScore) = registry.getHookInfo(address(hook));
+        (address developer, uint256 deposit, bool active,, uint256 riskScore) = registry.getHookInfo(address(hook));
         assertEq(developer, address(this));
         assertEq(deposit, INITIAL_DEPOSIT);
         assertTrue(active);
@@ -127,7 +127,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         registry.updateRiskScore(address(hook), 80); // High risk score
 
         // Verify risk score update
-        (,,, uint256 newRiskScore) = registry.getHookInfo(address(hook));
+        (,,,, uint256 newRiskScore) = registry.getHookInfo(address(hook));
         assertEq(newRiskScore, 80);
     }
 

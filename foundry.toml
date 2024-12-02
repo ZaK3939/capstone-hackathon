@@ -15,6 +15,7 @@ remappings = [
     "v4-core/=lib/v4-core/",
     "v4-periphery/=lib/v4-periphery/",
     "uniguard-avs/=lib/capstone-avs/",
+    "solady/=lib/solady/src/",
     # OpenZeppelinのremappingを明示的に指定
     "@openzeppelin/contracts/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/lib/eigenlayer-contracts/lib/openzeppelin-contracts/contracts/",
     "@openzeppelin-upgrades/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/lib/eigenlayer-contracts/lib/openzeppelin-contracts-upgradeable/",

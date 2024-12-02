@@ -23,7 +23,10 @@ contract InsuredHook is BaseHook, IInsuredHook {
     IHookRegistry public immutable registry;
     IInsuranceVault public immutable insuranceVault;
     mapping(PoolId => uint256) public swapVolumes;
-    mapping(PoolId => bool) public isPaused;
+    bool public isPaused;
+
+    // Events
+    event FeesCollected(PoolId indexed poolId, uint256 amount);
 
     constructor(IPoolManager _poolManager, address _registry, address _insuranceVault) BaseHook(_poolManager) {
         registry = IHookRegistry(_registry);
@@ -49,14 +52,13 @@ contract InsuredHook is BaseHook, IInsuredHook {
         });
     }
 
-    function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata)
+    function beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
         external
+        view
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        if (isPaused[key.toId()]) revert PoolPaused();
-        // if (registry.isPoolPaused(address(this), key.toId())) revert PausedByRegistry();
-
+        if (isPaused) revert PausedByRegistry();
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
@@ -79,10 +81,16 @@ contract InsuredHook is BaseHook, IInsuredHook {
         return (BaseHook.afterSwap.selector, 0);
     }
 
-    function pause(PoolId poolId) external {
+    function pause() external {
         if (msg.sender != address(registry)) revert OnlyRegistry();
-        isPaused[poolId] = true;
-        emit HookPaused(poolId);
+        isPaused = true;
+        emit HookPaused(address(this));
+    }
+
+    function unpause() external {
+        if (msg.sender != address(registry)) revert OnlyRegistry();
+        isPaused = false;
+        emit HookUnpaused(address(this));
     }
 
     function calculateSwapVolume(IPoolManager.SwapParams calldata params, BalanceDelta delta)

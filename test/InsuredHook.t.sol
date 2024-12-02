@@ -96,9 +96,9 @@ contract InsuredHookTest is Test, Fixtures {
 
     function testPauseByRegistry() public {
         vm.prank(address(registry));
-        hook.pause(poolId);
+        hook.pause();
 
-        assertTrue(hook.isPaused(poolId));
+        assertTrue(hook.isPaused());
 
         bool zeroForOne = true;
         int256 amountSpecified = -1e18;

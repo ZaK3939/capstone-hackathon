@@ -7,16 +7,18 @@ import {IInsuredHook} from "./interfaces/IInsuredHook.sol";
 import {IInsuranceVault} from "./interfaces/IInsuranceVault.sol";
 import {IHookRegistry} from "./interfaces/IHookRegistry.sol";
 import {IUniGuardServiceManager} from "uniguard-avs/contracts/src/interfaces/IUniGuardServiceManager.sol";
+import {LibString} from "solady/utils/LibString.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract HookRegistry is IHookRegistry, Ownable {
-    // State variables
+    using LibString for address;
+
     struct HookInfo {
         address developer;
         uint256 usdcDeposit;
         bool isActive;
+        bool isPaused;
         uint256 riskScore;
-        mapping(PoolId => bool) isPaused;
     }
 
     IERC20 public immutable USDC;
@@ -24,10 +26,9 @@ contract HookRegistry is IHookRegistry, Ownable {
     IUniGuardServiceManager public serviceManager;
     uint256 public constant MINIMUM_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
     bool public isVaultSet;
+    bool public isServiceManagerSet;
 
     mapping(address => HookInfo) public hooks;
-    mapping(address => bool) public operators;
-    uint256 public operatorCount;
 
     constructor(address _usdc, address _insuranceVault) {
         USDC = IERC20(_usdc);
@@ -35,59 +36,84 @@ contract HookRegistry is IHookRegistry, Ownable {
         _transferOwnership(msg.sender);
     }
 
-    bool public isServiceManagerSet;
-
-    function setServiceManager(address _serviceManager) external {
+    function setServiceManager(address _serviceManager) external onlyOwner {
         require(!isServiceManagerSet, "ServiceManager already set");
         require(_serviceManager != address(0), "Invalid ServiceManager address");
         serviceManager = IUniGuardServiceManager(_serviceManager);
         isServiceManagerSet = true;
+        emit ServiceManagerSet(_serviceManager);
     }
 
-    // Add setVault function
-    function setVault(address _vault) external {
+    function setVault(address _vault) external onlyOwner {
         require(!isVaultSet, "Vault already set");
         vault = IInsuranceVault(_vault);
         isVaultSet = true;
     }
 
-    // Hook Management
     function registerHook(address hook, uint256 usdcAmount) external {
         if (usdcAmount < MINIMUM_DEPOSIT) revert InvalidDeposit();
         if (hooks[hook].developer != address(0)) revert HookAlreadyRegistered();
 
-        // Transfer USDC from developer to registry
         require(USDC.transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
 
-        // Initialize hook info
         HookInfo storage info = hooks[hook];
         info.developer = msg.sender;
         info.usdcDeposit = usdcAmount;
-        info.isActive = true;
+        info.isActive = false; // Initially inactive until UNI stake is confirmed
+        info.isPaused = false;
         info.riskScore = 0;
 
-        // First register hook in vault
         vault.registerHook(hook);
 
-        // Then deposit USDC to vault
         USDC.approve(address(vault), usdcAmount);
         vault.depositUSDC(hook, usdcAmount);
+
+        serviceManager.createNewTask(hook.toHexString());
 
         emit HookRegistered(hook, msg.sender, usdcAmount);
     }
 
-    function pauseHook(address hook, PoolId poolId) external {
-        if (!isOperatorApproved(msg.sender)) revert NotAuthorized();
+    function activateHook(address hook) external {
+        require(msg.sender == address(vault), "Only Vault can activate");
+        require(hooks[hook].developer != address(0), "Hook not registered");
+        require(!hooks[hook].isActive, "Hook already active");
+
+        hooks[hook].isActive = true;
+        emit HookActivated(hook);
+    }
+
+    function deactivateHook(address hook) external {
+        require(msg.sender == address(vault), "Only Vault can deactivate");
+        require(hooks[hook].isActive, "Hook not active");
+
+        hooks[hook].isActive = false;
+        emit HookDeactivated(hook);
+    }
+
+    function pauseHook(address hook) external {
+        require(msg.sender == address(serviceManager), "Only ServiceManager can pause");
         if (hooks[hook].developer == address(0)) revert HookNotRegistered();
+        if (hooks[hook].isPaused) revert HookAlreadyPaused();
 
-        hooks[hook].isPaused[poolId] = true;
-        IInsuredHook(hook).pause(poolId);
+        hooks[hook].isPaused = true;
+        IInsuredHook(hook).pause();
 
-        emit HookPaused(hook, poolId);
+        emit HookPaused(hook);
+    }
+
+    function unpauseHook(address hook) external {
+        require(msg.sender == address(serviceManager), "Only ServiceManager can unpause");
+        if (hooks[hook].developer == address(0)) revert HookNotRegistered();
+        if (!hooks[hook].isPaused) revert HookNotPaused();
+
+        hooks[hook].isPaused = false;
+        IInsuredHook(hook).unpause();
+
+        emit HookUnpaused(hook);
     }
 
     function updateRiskScore(address hook, uint256 score) external {
-        if (!isOperatorApproved(msg.sender)) revert NotAuthorized();
+        require(msg.sender == address(serviceManager), "Only ServiceManager can update");
         if (hooks[hook].developer == address(0)) revert HookNotRegistered();
         hooks[hook].riskScore = score;
         emit RiskScoreUpdated(hook, score);
@@ -97,38 +123,12 @@ contract HookRegistry is IHookRegistry, Ownable {
     function getHookInfo(address hook)
         external
         view
-        returns (address developer, uint256 usdcDeposit, bool isActive, uint256 riskScore)
+        returns (address developer, uint256 usdcDeposit, bool isActive, bool isPaused, uint256 riskScore)
     {
         HookInfo storage info = hooks[hook];
-        return (info.developer, info.usdcDeposit, info.isActive, info.riskScore);
+        return (info.developer, info.usdcDeposit, info.isActive, info.isPaused, info.riskScore);
     }
 
-    function isPoolPaused(address hook, PoolId poolId) external view returns (bool) {
-        return hooks[hook].isPaused[poolId];
-    }
-
-    function registerOperator(address operator) external onlyOwner {
-        require(operator != address(0), "Invalid operator address");
-        require(!operators[operator], "Already registered");
-
-        operators[operator] = true;
-        operatorCount++;
-        emit OperatorRegistered(operator);
-    }
-
-    function removeOperator(address operator) external onlyOwner {
-        require(operators[operator], "Not registered");
-
-        operators[operator] = false;
-        operatorCount--;
-        emit OperatorRemoved(operator);
-    }
-
-    function isOperatorApproved(address operator) public view returns (bool) {
-        return operators[operator];
-    }
-
-    // Hook Status Getters
     function getDepositedAmount(address hook) external view returns (uint256) {
         return hooks[hook].usdcDeposit;
     }
@@ -139,5 +139,9 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     function getRiskScore(address hook) external view returns (uint256) {
         return hooks[hook].riskScore;
+    }
+
+    function isHookPaused(address hook) external view returns (bool) {
+        return hooks[hook].isPaused;
     }
 }
