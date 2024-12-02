@@ -44,19 +44,24 @@ contract CounterScript is Script, DeployPermit2 {
     }
 
     function run() public {
-        vm.broadcast();
+        vm.startBroadcast(); // 単一のブロードキャストブロックを開始
+
+        // プールマネージャーとトークンのデプロイ
         IPoolManager manager = deployPoolManager();
         MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
         MockERC20 uni = new MockERC20("UNI", "UNI", 18);
 
+        console2.log("serviceManagerAddress: %s", serviceManagerAddress);
+        // レジストリとボールトのデプロイ
         HookRegistry registry = new HookRegistry(address(usdc), address(this));
         registry.setServiceManager(serviceManagerAddress);
 
         InsuranceVault vault = new InsuranceVault(address(registry), address(usdc), address(uni));
+        console2.log("vault address: %s", address(vault));
         registry.setVault(address(vault));
 
+        // InsuredHookのデプロイ
         uint160 permissions = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG);
-
         (address hookAddress, bytes32 salt) = HookMiner.find(
             CREATE2_DEPLOYER,
             permissions,
@@ -65,30 +70,28 @@ contract CounterScript is Script, DeployPermit2 {
         );
         console2.log("Hook address: %s", hookAddress);
 
-        vm.broadcast();
         InsuredHook hook = new InsuredHook{salt: salt}(manager, address(registry), address(vault));
-
         console.log("InsuredHook address: %s", address(hook));
         require(address(hook) == hookAddress, "CounterScript: hook address mismatch");
 
-        usdc.mint(address(this), 100_000 * 1e6);
+        // トークンの初期設定
+        usdc.mint(msg.sender, 100_000 * 1e6);
         usdc.approve(address(registry), type(uint256).max);
         usdc.approve(address(vault), type(uint256).max);
         uint256 depositAmount = 10_000 * 1e6;
         registry.registerHook(address(hook), depositAmount);
 
-        vm.startBroadcast();
+        // 追加のヘルパーデプロイ
         IPositionManager posm = deployPosm(manager);
         (PoolModifyLiquidityTest lpRouter, PoolSwapTest swapRouter,) = deployRouters(manager);
-        vm.stopBroadcast();
 
-        vm.startBroadcast();
+        // テストライフサイクルの実行
         console2.log("Testing lifecycle");
         testLifecycle(manager, address(hook), posm, lpRouter, swapRouter);
-        vm.stopBroadcast();
+
+        vm.stopBroadcast(); // 単一のブロードキャストブロックを終了
     }
 
-    // 以下のヘルパー関数は元のまま
     function deployPoolManager() internal returns (IPoolManager) {
         return IPoolManager(address(new PoolManager(address(0))));
     }
