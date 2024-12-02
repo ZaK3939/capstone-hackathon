@@ -169,6 +169,10 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         return vaultInfo;
     }
 
+    function getDepositedAmount(address hook) external view returns (uint256) {
+        return usdcBalances[hook];
+    }
+
     function getStakeInfo(address user) external view returns (StakeInfo memory) {
         return stakeInfos[user];
     }

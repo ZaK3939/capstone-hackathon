@@ -13,170 +13,213 @@ import {Fixtures} from "./utils/Fixtures.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {UniGuardServiceManager} from "uniguard-avs/contracts/src/UniGuardServiceManager.sol";
-import {IUniGuardServiceManager} from "uniguard-avs/contracts/src/interfaces/IUniGuardServiceManager.sol";
-import {HelloWorldDeploymentLib} from "uniguard-avs/contracts/script/utils/HelloWorldDeploymentLib.sol";
-import {CoreDeploymentLib} from "uniguard-avs/contracts/script/utils/CoreDeploymentLib.sol";
-import {UpgradeableProxyLib} from "uniguard-avs/contracts/script/utils/UpgradeableProxyLib.sol";
-import {
-    Quorum,
-    StrategyParams,
-    IStrategy
-} from "@eigenlayer-middleware/src/interfaces/IECDSAStakeRegistryEventsAndErrors.sol";
-import {ERC20Mock} from "./mock/ERC20Mock.sol";
-import {IERC20, StrategyFactory} from "@eigenlayer/contracts/strategies/StrategyFactory.sol";
-// import {ECDSAStakeRegistry} from "uniguard-avs/contracts/lib/eigenlayer-middleware/src/unaudited/ECDSAStakeRegistry.sol";
+import {MockServiceManager} from "./mock/MockServiceManager.sol";
 
 contract InsuredHookIntegrationTest is Test, Fixtures {
-    InsuredHook hook;
-    HookRegistry registry;
-    InsuranceVault vault;
-    UniGuardServiceManager serviceManager;
-    MockERC20 usdc;
-    MockERC20 uni;
-    PoolId poolId;
-    HelloWorldDeploymentLib.DeploymentData internal helloWorldDeployment;
-    CoreDeploymentLib.DeploymentData internal coreDeployment;
-    CoreDeploymentLib.DeploymentConfigData coreConfigData;
-    Quorum quorum;
-    ERC20Mock public mockToken;
+    InsuredHook public hook;
+    HookRegistry public registry;
+    InsuranceVault public vault;
+    MockServiceManager public mockServiceManager;
+    MockERC20 public usdc;
+    MockERC20 public uni;
+    PoolId public poolId;
 
-    // Test constants
-    uint256 constant INITIAL_DEPOSIT = 10000e6; // 10,000 USDC
-    uint256 constant THRESHOLD_AMOUNT = 5000e6; // 5,000 USDC for testing
-    mapping(address => IStrategy) public tokenToStrategy;
+    address public developer;
+    address public uniStaker;
+    address public operator;
+
+    uint256 constant INITIAL_USDC = 100_000 * 1e6; // 100,000 USDC
+    uint256 constant INITIAL_UNI = 100_000 * 1e18; // 100,000 UNI
+    uint256 constant HOOK_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
+    uint256 constant UNI_STAKE = 1_000 * 1e18; // 1,000 UNI
+
+    event HookRegistered(address indexed hook, address indexed developer, uint256 deposit);
+    event HookActivated(address indexed hook);
+    event UNIStaked(address indexed staker, uint256 amount);
+    event RiskScoreUpdated(address indexed hook, uint256 score);
+    event HookPaused(address indexed hook);
 
     function setUp() public {
-        // Deploy v4-core contracts and setup currencies
-        deployFreshManagerAndRouters();
-        deployMintAndApprove2Currencies();
+        // Setup accounts
+        developer = makeAddr("developer");
+        uniStaker = makeAddr("uniStaker");
+        operator = makeAddr("operator");
 
         // Deploy mock tokens
         usdc = new MockERC20("USDC", "USDC", 6);
         uni = new MockERC20("UNI", "UNI", 18);
 
-        // Deploy core contracts with proxy admin
-        address proxyAdmin = UpgradeableProxyLib.deployProxyAdmin();
+        // Deploy base contracts
+        deployFreshManagerAndRouters();
+        deployMintAndApprove2Currencies();
 
-        // Deploy core contracts configuration
-        coreConfigData = CoreDeploymentLib.readDeploymentConfigValues("test/mockData/config/core/", 1337); // TODO: Fix this to correct path
-        coreDeployment = CoreDeploymentLib.deployContracts(proxyAdmin, coreConfigData);
-
-        // Setup registry and vault
+        // Deploy core contracts
         registry = new HookRegistry(address(usdc), address(this));
         vault = new InsuranceVault(address(registry), address(usdc), address(uni));
+        mockServiceManager = new MockServiceManager();
+
+        // Link contracts
         registry.setVault(address(vault));
+        registry.setServiceManager(address(mockServiceManager));
 
-        // Deploy service manager through deployment lib
-        mockToken = new ERC20Mock();
-
-        IStrategy strategy = addStrategy(address(mockToken));
-        quorum.strategies.push(StrategyParams({strategy: strategy, multiplier: 10_000}));
-        helloWorldDeployment = HelloWorldDeploymentLib.deployContracts(proxyAdmin, coreDeployment, quorum);
-        serviceManager = UniGuardServiceManager(helloWorldDeployment.helloWorldServiceManager);
-
-        // Configure registry
-        registry.setServiceManager(address(serviceManager));
-
-        // Setup hook with proper flags
+        // Setup hook
         address flags = address(uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG) ^ (0x4444 << 144));
         bytes memory constructorArgs = abi.encode(manager, address(registry), address(vault));
         deployCodeTo("InsuredHook.sol:InsuredHook", constructorArgs, flags);
         hook = InsuredHook(flags);
 
-        // Initialize pool
+        // Setup pool
         key = PoolKey(currency0, currency1, 3000, 60, IHooks(hook));
         poolId = key.toId();
         manager.initialize(key, SQRT_PRICE_1_1);
 
-        // Mint initial tokens
-        usdc.mint(address(this), INITIAL_DEPOSIT);
-        uni.mint(address(this), 1000e18);
+        // Setup initial balances
+        usdc.mint(developer, INITIAL_USDC);
+        uni.mint(uniStaker, INITIAL_UNI);
+
+        // Approvals
+        vm.startPrank(developer);
+        usdc.approve(address(registry), type(uint256).max);
+        vm.stopPrank();
+
+        vm.startPrank(uniStaker);
+        uni.approve(address(vault), type(uint256).max);
+        vm.stopPrank();
     }
 
-    function addStrategy(address token) public returns (IStrategy) {
-        if (tokenToStrategy[token] != IStrategy(address(0))) {
-            return tokenToStrategy[token];
-        }
+    function test_HookRegistrationFlow() public {
+        // Hook Registration
+        vm.startPrank(developer);
 
-        StrategyFactory strategyFactory = StrategyFactory(coreDeployment.strategyFactory);
-        IStrategy newStrategy = strategyFactory.deployNewStrategy(IERC20(token));
-        tokenToStrategy[token] = newStrategy;
-        return newStrategy;
-    }
+        vm.expectEmit(true, true, false, true);
+        emit HookRegistered(address(hook), developer, HOOK_DEPOSIT);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
 
-    function testHookRegistration() public {
-        // Step 1: Register hook
-        usdc.approve(address(registry), INITIAL_DEPOSIT);
-        registry.registerHook(address(hook), INITIAL_DEPOSIT);
+        (address registeredDev, uint256 deposit, bool isActive, bool isPaused, uint256 riskScore) =
+            registry.getHookInfo(address(hook));
 
-        // Verify registration
-        (address developer, uint256 deposit, bool active,, uint256 riskScore) = registry.getHookInfo(address(hook));
-        assertEq(developer, address(this));
-        assertEq(deposit, INITIAL_DEPOSIT);
-        assertTrue(active);
+        assertEq(registeredDev, developer);
+        assertEq(deposit, HOOK_DEPOSIT);
+        assertFalse(isActive); // Initially inactive until UNI stake
+        assertFalse(isPaused);
         assertEq(riskScore, 0);
+
+        // Verify USDC balances
+        assertEq(vault.getDepositedAmount(address(hook)), HOOK_DEPOSIT);
+
+        vm.stopPrank();
     }
 
-    function testAnomalyDetection() public {
+    function test_UniStakingFlow() public {
+        // Setup: Register hook first
+        vm.prank(developer);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
+
+        // Record initial balances
+        uint256 initialUniBalance = uni.balanceOf(uniStaker);
+        uint256 initialVaultBalance = uni.balanceOf(address(vault));
+
+        // UNI Staking
+        vm.startPrank(uniStaker);
+
+        vm.expectEmit(true, false, false, true);
+        emit UNIStaked(uniStaker, UNI_STAKE);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+
+        // Verify balances
+        assertEq(uni.balanceOf(uniStaker), initialUniBalance - UNI_STAKE);
+        assertEq(uni.balanceOf(address(vault)), initialVaultBalance + UNI_STAKE);
+        assertEq(vault.uniBalances(uniStaker), UNI_STAKE);
+        assertEq(vault.getHookStake(address(hook), uniStaker), UNI_STAKE);
+
+        vm.stopPrank();
+
+        // Hook should not be paused after staking
+        assertFalse(registry.isHookPaused(address(hook)));
+    }
+
+    function test_RiskMonitoringAndPauseFlow() public {
+        // Setup: Register hook and stake UNI
+        vm.startPrank(developer);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
+        vm.stopPrank();
+
+        vm.startPrank(uniStaker);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+        vm.stopPrank();
+
+        // Risk Detection
+        vm.startPrank(address(mockServiceManager));
+
+        // Update risk score
+        vm.expectEmit(true, false, false, true);
+        emit RiskScoreUpdated(address(hook), 80);
+        registry.updateRiskScore(address(hook), 80);
+
+        // Pause hook due to high risk
+        vm.expectEmit(true, false, false, true);
+        emit HookPaused(address(hook));
+        registry.pauseHook(address(hook));
+
+        assertTrue(registry.isHookPaused(address(hook)));
+
+        vm.stopPrank();
+    }
+
+    function test_InsolvencyFlow() public {
+        // Setup: Register hook and stake UNI
+        vm.startPrank(developer);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
+        vm.stopPrank();
+
+        vm.startPrank(uniStaker);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+        vm.stopPrank();
+
+        // Risk Detection and Pause
+        vm.startPrank(address(mockServiceManager));
+        registry.updateRiskScore(address(hook), 80);
+        registry.pauseHook(address(hook));
+        vm.stopPrank();
+
+        // Process insolvency claim
+        uint256 lossAmount = 5_000 * 1e6; // 5,000 USDC loss
+
+        vm.prank(address(registry));
+        (uint256 usdcPaid, uint256 uniPaid) = vault.processCompensation(address(hook), poolId, lossAmount);
+
+        // Verify compensation
+        assertEq(usdcPaid, lossAmount);
+        assertEq(uniPaid, 0); // No UNI needed as USDC was sufficient
+        assertEq(vault.usdcBalances(address(hook)), HOOK_DEPOSIT - lossAmount);
+    }
+
+    function test_CompleteLifecycle() public {
         // Setup
-        testHookRegistration();
+        vm.startPrank(developer);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
+        vm.stopPrank();
 
-        // Simulate anomaly detection
-        bytes memory anomalyData = abi.encode("High gas usage detected");
-        vm.prank(address(serviceManager));
-        registry.updateRiskScore(address(hook), 80); // High risk score
+        // Staking
+        vm.startPrank(uniStaker);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+        vm.stopPrank();
 
-        // Verify risk score update
-        (,,,, uint256 newRiskScore) = registry.getHookInfo(address(hook));
-        assertEq(newRiskScore, 80);
+        // Risk Detection
+        vm.startPrank(address(mockServiceManager));
+        registry.updateRiskScore(address(hook), 80);
+        registry.pauseHook(address(hook));
+        vm.stopPrank();
+
+        // Insolvency
+        uint256 lossAmount = 5_000 * 1e6;
+        vm.prank(address(registry));
+        (uint256 usdcPaid,) = vault.processCompensation(address(hook), poolId, lossAmount);
+        assertEq(usdcPaid, lossAmount);
+
+        // Final state verification
+        (,, bool isActive, bool isPaused,) = registry.getHookInfo(address(hook));
+        assertTrue(isPaused);
+        assertFalse(isActive);
     }
-
-    // function testHookPause() public {
-    //     // Setup
-    //     testHookRegistration();
-    //     testAnomalyDetection();
-
-    //     // Pause hook via registry
-    //     bytes32 poolId = bytes32(uint256(1)); // Example pool ID
-    //     vm.prank(address(registry));
-    //     hook.pause(poolId);
-
-    //     // Verify pause status
-    //     assertTrue(hook.isPaused(poolId));
-    // }
-
-    // function testInsolvencyDetermination() public {
-    //     // Setup
-    //     testHookRegistration();
-    //     testAnomalyDetection();
-    //     testHookPause();
-
-    //     // Simulate loss event
-    //     uint256 lossAmount = THRESHOLD_AMOUNT;
-    //     bytes32 poolId = bytes32(uint256(1));
-
-    //     // Process compensation
-    //     vm.prank(address(registry));
-    //     (uint256 usdcPaid, uint256 uniPaid) = vault.processCompensation(address(hook), poolId, lossAmount);
-
-    //     // Verify compensation
-    //     assertEq(usdcPaid + uniPaid, lossAmount);
-    // }
-
-    // function testInsolvencyResolution() public {
-    //     // Setup
-    //     testHookRegistration();
-    //     testAnomalyDetection();
-    //     testHookPause();
-    //     testInsolvencyDetermination();
-
-    //     bytes32 poolId = bytes32(uint256(1));
-
-    //     // Verify hook status after insolvency
-    //     (,, bool active,) = registry.getHookInfo(address(hook));
-    //     assertFalse(active);
-
-    //     // Verify pool remains paused
-    //     assertTrue(hook.isPaused(poolId));
-    // }
 }

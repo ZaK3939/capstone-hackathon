@@ -46,6 +46,7 @@ interface IInsuranceVault {
 
     // View Functions
     function getVaultInfo() external view returns (VaultInfo memory);
+    function getDepositedAmount(address hook) external view returns (uint256);
     function getStakeInfo(address user) external view returns (StakeInfo memory);
     function getMorphoYield() external view returns (uint256);
     function getAvailableUSDC() external view returns (uint256);
