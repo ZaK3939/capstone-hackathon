@@ -35,7 +35,9 @@ contract MockServiceManager is IUniGuardServiceManager {
         Task calldata task,
         uint32 referenceTaskIndex,
         bytes calldata signature,
-        string memory metrics
+        string memory metrics,
+        uint256 riskScore,
+        address hook
     ) external {
         taskResponses[msg.sender][referenceTaskIndex] = abi.encode(task, metrics);
         emit TaskResponded(referenceTaskIndex, task, msg.sender);
