@@ -45,7 +45,7 @@ async function createMetricsTask(hookAddress: string) {
 }
 
 function startMetricsTasks() {
-  const testHookAddress = "0x1234567890123456789012345678901234567890";
+  const testHookAddress = "0x5037e7747faa78fc0ecf8dfc526dcd19f73076ce";
 
   setInterval(() => {
     console.log(`Creating metrics task for hook: ${testHookAddress}`);

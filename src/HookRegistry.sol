@@ -9,6 +9,7 @@ import {IHookRegistry} from "./interfaces/IHookRegistry.sol";
 import {IUniGuardServiceManager} from "uniguard-avs/contracts/src/interfaces/IUniGuardServiceManager.sol";
 import {LibString} from "solady/utils/LibString.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {console2} from "forge-std/console2.sol";
 
 contract HookRegistry is IHookRegistry, Ownable {
     using LibString for address;
@@ -114,7 +115,7 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     function updateRiskScore(address hook, uint256 score) external {
         require(msg.sender == address(serviceManager), "Only ServiceManager can update");
-        if (hooks[hook].developer == address(0)) revert HookNotRegistered();
+        // if (hooks[hook].developer == address(0)) revert HookNotRegistered();
         hooks[hook].riskScore = score;
         emit RiskScoreUpdated(hook, score);
     }

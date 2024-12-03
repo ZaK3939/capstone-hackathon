@@ -8,6 +8,8 @@ contract MockServiceManager is IUniGuardServiceManager {
     mapping(uint32 => bytes32) private taskHashes;
     mapping(address => mapping(uint32 => bytes)) private taskResponses;
 
+    function setHookRegistry(address _hookRegistry) external {}
+
     function latestTaskNum() external view returns (uint32) {
         return taskNum;
     }
