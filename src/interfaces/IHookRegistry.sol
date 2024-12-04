@@ -18,6 +18,7 @@ interface IHookRegistry {
     event HookUnpaused(address indexed hook);
     event RiskScoreUpdated(address indexed hook, uint256 score);
     event ServiceManagerSet(address indexed serviceManager);
+    event RiskThresholdUpdated(uint256 threshold);
 
     // Setup
     function setVault(address _vault) external;

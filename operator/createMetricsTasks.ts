@@ -9,6 +9,19 @@ if (!Object.keys(process.env).length) {
   throw new Error("process.env object is empty");
 }
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+if (args.length < 1) {
+  console.error("Usage: ts-node createMetricsTasks.ts <hook-address>");
+  process.exit(1);
+}
+
+const hookAddress = args[0];
+if (!ethers.isAddress(hookAddress)) {
+  console.error("Invalid hook address provided");
+  process.exit(1);
+}
+
 // Setup env variables
 const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
@@ -28,7 +41,6 @@ const serviceManager = new ethers.Contract(serviceManagerAddress, serviceManager
 
 function generateMetricsTaskName(hookAddress: string): string {
   const timestamp = Date.now();
-
   const formattedAddr = ethers.getAddress(hookAddress.padEnd(42, "0"));
   return `metrics_${formattedAddr}_${timestamp}`;
 }
@@ -45,11 +57,11 @@ async function createMetricsTask(hookAddress: string) {
 }
 
 function startMetricsTasks() {
-  const testHookAddress = "0x5037e7747faa78fc0ecf8dfc526dcd19f73076ce";
+  console.log(`Starting metrics tasks for hook: ${hookAddress}`);
 
   setInterval(() => {
-    console.log(`Creating metrics task for hook: ${testHookAddress}`);
-    createMetricsTask(testHookAddress);
+    console.log(`Creating metrics task for hook: ${hookAddress}`);
+    createMetricsTask(hookAddress);
   }, 24000);
 }
 

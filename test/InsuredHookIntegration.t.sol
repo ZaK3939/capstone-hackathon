@@ -26,6 +26,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
 
     address public developer;
     address public uniStaker;
+    address public uniStaker2;
     address public operator;
 
     uint256 constant INITIAL_USDC = 100_000 * 1e6; // 100,000 USDC
@@ -38,11 +39,15 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
     event UNIStaked(address indexed staker, uint256 amount);
     event RiskScoreUpdated(address indexed hook, uint256 score);
     event HookPaused(address indexed hook);
+    event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook, PoolId poolId);
+    event VoteCast(uint256 indexed proposalId, address indexed voter, uint256 weight);
+    event ProposalExecuted(uint256 indexed proposalId, bool passed);
 
     function setUp() public {
         // Setup accounts
         developer = makeAddr("developer");
         uniStaker = makeAddr("uniStaker");
+        uniStaker2 = makeAddr("uniStaker2");
         operator = makeAddr("operator");
 
         // Deploy mock tokens
@@ -76,6 +81,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         // Setup initial balances
         usdc.mint(developer, INITIAL_USDC);
         uni.mint(uniStaker, INITIAL_UNI);
+        uni.mint(uniStaker2, INITIAL_UNI);
 
         // Approvals
         vm.startPrank(developer);
@@ -85,12 +91,14 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         vm.startPrank(uniStaker);
         uni.approve(address(vault), type(uint256).max);
         vm.stopPrank();
+
+        vm.startPrank(uniStaker2);
+        uni.approve(address(vault), type(uint256).max);
+        vm.stopPrank();
     }
 
     function test_HookRegistrationFlow() public {
-        // Hook Registration
         vm.startPrank(developer);
-
         vm.expectEmit(true, true, false, true);
         emit HookRegistered(address(hook), developer, HOOK_DEPOSIT);
         registry.registerHook(address(hook), HOOK_DEPOSIT);
@@ -100,81 +108,108 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
 
         assertEq(registeredDev, developer);
         assertEq(deposit, HOOK_DEPOSIT);
-        assertFalse(isActive); // Initially inactive until UNI stake
+        assertFalse(isActive);
         assertFalse(isPaused);
         assertEq(riskScore, 0);
-
-        // Verify USDC balances
         assertEq(vault.getDepositedAmount(address(hook)), HOOK_DEPOSIT);
-
         vm.stopPrank();
     }
 
     function test_UniStakingFlow() public {
-        // Setup: Register hook first
         vm.prank(developer);
         registry.registerHook(address(hook), HOOK_DEPOSIT);
 
-        // Record initial balances
         uint256 initialUniBalance = uni.balanceOf(uniStaker);
         uint256 initialVaultBalance = uni.balanceOf(address(vault));
 
-        // UNI Staking
         vm.startPrank(uniStaker);
-
         vm.expectEmit(true, false, false, true);
         emit UNIStaked(uniStaker, UNI_STAKE);
         vault.stakeUNI(UNI_STAKE, address(hook));
 
-        // Verify balances
         assertEq(uni.balanceOf(uniStaker), initialUniBalance - UNI_STAKE);
         assertEq(uni.balanceOf(address(vault)), initialVaultBalance + UNI_STAKE);
         assertEq(vault.uniBalances(uniStaker), UNI_STAKE);
         assertEq(vault.getHookStake(address(hook), uniStaker), UNI_STAKE);
-
         vm.stopPrank();
 
-        // Hook should not be paused after staking
         assertFalse(registry.isHookPaused(address(hook)));
     }
 
     function test_RiskMonitoringAndPauseFlow() public {
-        // Setup: Register hook and stake UNI
-        vm.startPrank(developer);
+        vm.prank(developer);
         registry.registerHook(address(hook), HOOK_DEPOSIT);
-        vm.stopPrank();
 
-        vm.startPrank(uniStaker);
+        vm.prank(uniStaker);
         vault.stakeUNI(UNI_STAKE, address(hook));
-        vm.stopPrank();
 
-        // Risk Detection
         vm.startPrank(address(mockServiceManager));
-
-        // Update risk score
         vm.expectEmit(true, false, false, true);
         emit RiskScoreUpdated(address(hook), 80);
         registry.updateRiskScore(address(hook), 80);
 
-        // Pause hook due to high risk
         vm.expectEmit(true, false, false, true);
         emit HookPaused(address(hook));
         registry.pauseHook(address(hook));
 
         assertTrue(registry.isHookPaused(address(hook)));
-
         vm.stopPrank();
     }
 
     function test_InsolvencyFlow() public {
-        // Setup: Register hook and stake UNI
-        vm.startPrank(developer);
+        // Setup initial state
+        vm.prank(developer);
         registry.registerHook(address(hook), HOOK_DEPOSIT);
+
+        // Setup stakers
+        vm.prank(uniStaker);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+        vm.prank(uniStaker2);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+
+        // Pause hook
+        vm.startPrank(address(mockServiceManager));
+        registry.updateRiskScore(address(hook), 80);
+        registry.pauseHook(address(hook));
         vm.stopPrank();
 
+        // Create insolvency proposal
+        vm.startPrank(address(registry));
+        uint256 proposalId = vault.proposeInsolvency(address(hook), poolId);
+
+        // Vote on proposal
         vm.startPrank(uniStaker);
-        vault.stakeUNI(UNI_STAKE, address(hook));
+        vault.castVote(proposalId);
         vm.stopPrank();
+
+        vm.startPrank(uniStaker2);
+        vault.castVote(proposalId);
+        vm.stopPrank();
+
+        // Execute proposal
+        vm.startPrank(address(registry));
+        vault.executeProposal(proposalId);
+
+        // Verify proposal state
+        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        assertTrue(executed);
+        assertTrue(passed);
+
+        // Verify compensation effects
+        assertTrue(vault.usdcBalances(address(hook)) < HOOK_DEPOSIT);
+        vm.stopPrank();
+    }
+
+    function test_CompleteLifecycle() public {
+        // Registration
+        vm.prank(developer);
+        registry.registerHook(address(hook), HOOK_DEPOSIT);
+
+        // Staking
+        vm.prank(uniStaker);
+        vault.stakeUNI(UNI_STAKE, address(hook));
+        vm.prank(uniStaker2);
+        vault.stakeUNI(UNI_STAKE, address(hook));
 
         // Risk Detection and Pause
         vm.startPrank(address(mockServiceManager));
@@ -182,44 +217,31 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         registry.pauseHook(address(hook));
         vm.stopPrank();
 
-        // Process insolvency claim
-        uint256 lossAmount = 5_000 * 1e6; // 5,000 USDC loss
+        // Insolvency Handling
+        vm.startPrank(address(registry));
+        uint256 proposalId = vault.proposeInsolvency(address(hook), poolId);
 
-        vm.prank(address(registry));
-        (uint256 usdcPaid, uint256 uniPaid) = vault.processCompensation(address(hook), poolId, lossAmount);
-
-        // Verify compensation
-        assertEq(usdcPaid, lossAmount);
-        assertEq(uniPaid, 0); // No UNI needed as USDC was sufficient
-        assertEq(vault.usdcBalances(address(hook)), HOOK_DEPOSIT - lossAmount);
-    }
-
-    function test_CompleteLifecycle() public {
-        // Setup
-        vm.startPrank(developer);
-        registry.registerHook(address(hook), HOOK_DEPOSIT);
-        vm.stopPrank();
-
-        // Staking
+        // Voting
         vm.startPrank(uniStaker);
-        vault.stakeUNI(UNI_STAKE, address(hook));
+        vault.castVote(proposalId);
         vm.stopPrank();
 
-        // Risk Detection
-        vm.startPrank(address(mockServiceManager));
-        registry.updateRiskScore(address(hook), 80);
-        registry.pauseHook(address(hook));
+        vm.startPrank(uniStaker2);
+        vault.castVote(proposalId);
         vm.stopPrank();
 
-        // Insolvency
-        uint256 lossAmount = 5_000 * 1e6;
-        vm.prank(address(registry));
-        (uint256 usdcPaid,) = vault.processCompensation(address(hook), poolId, lossAmount);
-        assertEq(usdcPaid, lossAmount);
+        // Execute proposal
+        vm.startPrank(address(registry));
+        vault.executeProposal(proposalId);
 
         // Final state verification
         (,, bool isActive, bool isPaused,) = registry.getHookInfo(address(hook));
         assertTrue(isPaused);
         assertFalse(isActive);
+
+        // Verify proposal state
+        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        assertTrue(executed);
+        assertTrue(passed);
     }
 }

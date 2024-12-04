@@ -16,6 +16,7 @@ contract InsuranceVaultTest is Test {
     address public registry;
     address public hook;
     address public staker;
+    address public staker2;
 
     uint256 constant INITIAL_USDC = 100_000 * 1e6; // 100,000 USDC
     uint256 constant INITIAL_UNI = 100_000 * 1e18; // 100,000 UNI
@@ -24,162 +25,140 @@ contract InsuranceVaultTest is Test {
     event HookRegistered(address indexed hook);
     event USDCDeposited(address indexed hook, uint256 amount);
     event UNIStaked(address indexed staker, uint256 amount);
-    event CompensationProcessed(address indexed hook, PoolId indexed poolId, uint256 usdcPaid, uint256 uniPaid);
+    event CompensationProcessed(address indexed hook, PoolId indexed poolId, uint256 usdcPaid);
+    event SwapFeeReceived(address indexed hook, uint256 amount);
+    event InsuranceFeeAccumulated(address indexed hook, uint256 amount);
+    event StakerRewardAccumulated(address indexed hook, uint256 amount);
+    event RewardsDistributed(address indexed staker, uint256 amount);
+    event VoteCast(uint256 indexed proposalId, address indexed voter, uint256 weight);
+    event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook, PoolId poolId);
+    event ProposalExecuted(uint256 indexed proposalId, bool passed);
 
     function setUp() public {
-        // Deploy tokens
         usdc = new MockERC20("USDC", "USDC", 6);
         uni = new MockERC20("UNI", "UNI", 18);
 
-        // Setup accounts
         registry = makeAddr("registry");
         hook = makeAddr("hook");
         staker = makeAddr("staker");
+        staker2 = makeAddr("staker2");
 
-        // Deploy vault
         vault = new InsuranceVault(registry, address(usdc), address(uni));
 
-        // Setup initial balances
         usdc.mint(address(registry), INITIAL_USDC);
-        usdc.mint(address(vault), INITIAL_USDC); // Mint additional USDC to vault for compensation
+        usdc.mint(address(vault), INITIAL_USDC);
         uni.mint(address(staker), INITIAL_UNI);
-        uni.mint(address(vault), INITIAL_UNI); // Mint additional UNI to vault
+        uni.mint(address(staker2), INITIAL_UNI);
+        uni.mint(address(vault), INITIAL_UNI);
 
-        // Approve vault for transactions
-        vm.prank(registry);
+        vm.startPrank(registry);
         usdc.approve(address(vault), type(uint256).max);
+        // モックレジストリの設定
+        vm.mockCall(registry, abi.encodeWithSignature("isHookPaused(address)"), abi.encode(true));
+        vm.stopPrank();
+
         vm.prank(staker);
+        uni.approve(address(vault), type(uint256).max);
+        vm.prank(staker2);
         uni.approve(address(vault), type(uint256).max);
     }
 
-    function testRegisterHook() public {
+    function testMainFlow() public {
+        // Register hook
         vm.prank(registry);
-        vm.expectEmit(true, false, false, true);
-        emit HookRegistered(hook);
         vault.registerHook(hook);
-
         assertTrue(vault.registeredHooks(hook));
-    }
-
-    function testRegisterHookUnauthorized() public {
-        vm.expectRevert("Only registry");
-        vault.registerHook(hook);
-    }
-
-    function testRegisterHookTwice() public {
-        vm.startPrank(registry);
-        vault.registerHook(hook);
-
-        vm.expectRevert("Hook already registered");
-        vault.registerHook(hook);
-        vm.stopPrank();
-    }
-
-    function testDepositUSDC() public {
-        uint256 depositAmount = 10_000 * 1e6;
-
-        // Register hook first
-        vm.prank(registry);
-        vault.registerHook(hook);
 
         // Deposit USDC
+        uint256 depositAmount = 10_000 * 1e6;
         vm.prank(registry);
-        vm.expectEmit(true, false, false, true);
-        emit USDCDeposited(hook, depositAmount);
         vault.depositUSDC(hook, depositAmount);
-
         assertEq(vault.usdcBalances(hook), depositAmount);
-        assertEq(vault.morphoBalance(), depositAmount);
 
-        IInsuranceVault.VaultInfo memory info = vault.getVaultInfo();
-        assertEq(info.totalUSDCDeposited, depositAmount);
+        // Stake UNI
+        vm.startPrank(staker);
+        vault.stakeUNI(STAKE_AMOUNT, hook);
+        assertEq(vault.uniBalances(staker), STAKE_AMOUNT);
+        assertEq(vault.getHookStake(hook, staker), STAKE_AMOUNT);
+        vm.stopPrank();
+
+        // Simulate swap fee
+        uint256 swapFee = 1 ether;
+        vm.deal(hook, swapFee);
+        vm.prank(hook);
+        vault.receiveSwapFee{value: swapFee}(hook);
+
+        // Record initial balances
+        uint256 initialStakerBalance = address(staker).balance;
+
+        // Wait for some time to accumulate rewards
+        vm.warp(block.timestamp + 1 days);
+
+        // Claim rewards
+        vm.prank(staker);
+        uint256 rewards = vault.claimRewards();
+        assertTrue(rewards > 0);
+
+        // Verify ETH rewards
+        assertEq(address(staker).balance, initialStakerBalance + rewards);
+        uint256 STAKER_REWARD_PERCENTAGE = 80;
+        assertEq(rewards, (swapFee * STAKER_REWARD_PERCENTAGE) / 100);
     }
 
-    function testStakeUNI() public {
-        // Register hook first
+    function testInsolvencyProposal() public {
+        vm.startPrank(registry);
+        vault.registerHook(hook);
+        vault.depositUSDC(hook, 10_000 * 1e6);
+        vm.stopPrank();
+
+        // Setup stakers
+        vm.prank(staker);
+        vault.stakeUNI(STAKE_AMOUNT, hook);
+        vm.prank(staker2);
+        vault.stakeUNI(STAKE_AMOUNT, hook);
+
+        // Create proposal
+        vm.prank(registry);
+        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
+        uint256 proposalId = vault.proposeInsolvency(hook, poolId);
+
+        // Cast votes
+        vm.prank(staker);
+        vault.castVote(proposalId);
+        vm.prank(staker2);
+        vault.castVote(proposalId);
+
+        // Execute proposal
+        vm.prank(registry);
+        vault.executeProposal(proposalId);
+
+        // Verify proposal execution
+        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        assertTrue(executed);
+        assertTrue(passed);
+    }
+
+    function testVaultMetrics() public {
         vm.prank(registry);
         vault.registerHook(hook);
 
-        // Record starting balances
-        uint256 stakerStartBalance = uni.balanceOf(staker);
-        uint256 vaultStartBalance = uni.balanceOf(address(vault));
+        // Test deposit
+        uint256 depositAmount = 10_000 * 1e6;
+        vm.prank(registry);
+        vault.depositUSDC(hook, depositAmount);
 
-        // Stake UNI
-        vm.recordLogs();
+        // Test staking
         vm.prank(staker);
         vault.stakeUNI(STAKE_AMOUNT, hook);
-
-        // Verify the event
-        Vm.Log[] memory entries = vm.getRecordedLogs();
-        assertEq(entries.length, 2); // Transfer + UNIStaked events
-        assertEq(entries[1].topics[0], keccak256("UNIStaked(address,uint256)"));
-        assertEq(entries[1].topics[1], bytes32(uint256(uint160(staker))));
-        assertEq(abi.decode(entries[1].data, (uint256)), STAKE_AMOUNT);
-
-        // Verify balances
-        assertEq(uni.balanceOf(staker), stakerStartBalance - STAKE_AMOUNT);
-        assertEq(uni.balanceOf(address(vault)), vaultStartBalance + STAKE_AMOUNT);
-        assertEq(vault.uniBalances(staker), STAKE_AMOUNT);
-        assertEq(vault.getHookStake(hook, staker), STAKE_AMOUNT);
-
-        // Verify stake info
-        IInsuranceVault.StakeInfo memory info = vault.getStakeInfo(staker);
-        assertEq(info.amount, STAKE_AMOUNT);
-        assertEq(info.lastRewardTime, block.timestamp);
 
         // Verify vault info
         IInsuranceVault.VaultInfo memory vInfo = vault.getVaultInfo();
+        assertEq(vInfo.totalUSDCDeposited, depositAmount);
         assertEq(vInfo.totalUNIStaked, STAKE_AMOUNT);
-    }
 
-    function testProcessCompensation() public {
-        uint256 depositAmount = 10_000 * 1e6;
-        uint256 lossAmount = 5_000 * 1e6;
-
-        // Register and deposit
-        vm.startPrank(registry);
-        vault.registerHook(hook);
-        vault.depositUSDC(hook, depositAmount);
-
-        // Process compensation
-        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
-        vm.expectEmit(true, true, false, true);
-        emit CompensationProcessed(hook, poolId, lossAmount, 0);
-        (uint256 usdcPaid, uint256 uniPaid) = vault.processCompensation(hook, poolId, lossAmount);
-
-        assertEq(usdcPaid, lossAmount);
-        assertEq(uniPaid, 0);
-        assertEq(vault.usdcBalances(hook), depositAmount - lossAmount);
-        vm.stopPrank();
-    }
-
-    function testProcessCompensationWithUNILayer() public {
-        uint256 depositAmount = 5_000 * 1e6;
-        uint256 lossAmount = 10_000 * 1e6;
-
-        // Setup: Register hook, deposit USDC, and stake UNI
-        vm.startPrank(registry);
-        vault.registerHook(hook);
-        vault.depositUSDC(hook, depositAmount);
-        vm.stopPrank();
-
-        vm.prank(staker);
-        vault.stakeUNI(STAKE_AMOUNT, hook);
-
-        // Record starting balances
-        uint256 startUSDCBalance = usdc.balanceOf(address(registry));
-        uint256 startUNIBalance = uni.balanceOf(address(vault));
-
-        // Process compensation
-        vm.prank(registry);
-        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
-        (uint256 usdcPaid, uint256 uniPaid) = vault.processCompensation(hook, poolId, lossAmount);
-
-        // Verify compensation
-        assertEq(usdcPaid, depositAmount);
-        assertEq(uniPaid, lossAmount - depositAmount);
-        assertEq(vault.usdcBalances(hook), 0);
-        assertEq(usdc.balanceOf(address(registry)), startUSDCBalance + depositAmount);
-        assertTrue(uni.balanceOf(address(vault)) >= startUNIBalance - uniPaid);
+        // Verify stake info
+        IInsuranceVault.StakeInfo memory sInfo = vault.getStakeInfo(staker);
+        assertEq(sInfo.amount, STAKE_AMOUNT);
+        assertEq(sInfo.lastRewardTime, block.timestamp);
     }
 }

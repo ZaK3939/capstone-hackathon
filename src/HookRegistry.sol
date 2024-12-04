@@ -26,6 +26,7 @@ contract HookRegistry is IHookRegistry, Ownable {
     IInsuranceVault public vault;
     IUniGuardServiceManager public serviceManager;
     uint256 public constant MINIMUM_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
+    uint256 public riskThreshold = 80;
     bool public isVaultSet;
     bool public isServiceManagerSet;
 
@@ -43,6 +44,12 @@ contract HookRegistry is IHookRegistry, Ownable {
         serviceManager = IUniGuardServiceManager(_serviceManager);
         isServiceManagerSet = true;
         emit ServiceManagerSet(_serviceManager);
+    }
+
+    function setRiskThreshold(uint256 _threshold) external onlyOwner {
+        require(_threshold > 0 && _threshold <= 100, "Invalid threshold value");
+        riskThreshold = _threshold;
+        emit RiskThresholdUpdated(_threshold);
     }
 
     function setVault(address _vault) external onlyOwner {
@@ -91,10 +98,9 @@ contract HookRegistry is IHookRegistry, Ownable {
         emit HookDeactivated(hook);
     }
 
-    function pauseHook(address hook) external {
+    function pauseHook(address hook) public {
         require(msg.sender == address(serviceManager), "Only ServiceManager can pause");
         if (hooks[hook].developer == address(0)) revert HookNotRegistered();
-        if (hooks[hook].isPaused) revert HookAlreadyPaused();
 
         hooks[hook].isPaused = true;
         IInsuredHook(hook).pause();
@@ -115,9 +121,12 @@ contract HookRegistry is IHookRegistry, Ownable {
 
     function updateRiskScore(address hook, uint256 score) external {
         require(msg.sender == address(serviceManager), "Only ServiceManager can update");
-        // if (hooks[hook].developer == address(0)) revert HookNotRegistered();
         hooks[hook].riskScore = score;
         emit RiskScoreUpdated(hook, score);
+
+        if (score >= riskThreshold) {
+            pauseHook(hook);
+        }
     }
 
     // View Functions

@@ -85,16 +85,27 @@ console.log("Contract addresses:", {
 // Metrics collection
 async function collectMetrics(hookAddress: string) {
   try {
-    const blockNumber = await provider.getBlockNumber();
-    const block = await provider.getBlock(blockNumber);
+    // ランダムな価格を生成（1000-2000の範囲）
+    const currentPrice = 1000 + Math.random() * 1000;
+    const hourAgoPrice = 1000 + Math.random() * 1000;
 
-    return JSON.stringify({
-      hookAddress: hookAddress,
+    // 価格変動率を計算
+    const priceChange = Math.abs(((currentPrice - hourAgoPrice) / hourAgoPrice) * 100);
+
+    // 30%以上の価格変動があれば異常とみなす
+    const isVolatile = priceChange > 30;
+
+    return {
+      hookAddress,
       timestamp: Date.now(),
-      blockNumber: blockNumber,
-      blockTimestamp: block?.timestamp,
-      txCount: 1, // Initial simple implementation
-    });
+      metrics: {
+        currentPrice: currentPrice.toFixed(2),
+        hourAgoPrice: hourAgoPrice.toFixed(2),
+        priceChange: priceChange.toFixed(2) + "%",
+      },
+      riskScore: isVolatile ? 80 : 20,
+      warning: isVolatile ? "Abnormal price movement detected" : null,
+    };
   } catch (error) {
     console.error("Error collecting metrics:", error);
     throw error;
@@ -112,13 +123,10 @@ function parseHookAddressFromTaskName(taskName: string): string {
 
 const signAndRespondToTask = async (taskIndex: number, taskCreatedBlock: number, taskName: string) => {
   try {
-    // const hookAddress = parseHookAddressFromTaskName(taskName);
-    const hookAddress = "0x5037e7747faa78fc0ecf8dfc526dcd19f73076ce" as Address;
-    // check hook address is Address format
-
+    const hookAddress = parseHookAddressFromTaskName(taskName);
     const metrics = await collectMetrics(hookAddress);
     const metricsStr = JSON.stringify(metrics);
-    const riskScore = 50;
+    const riskScore = metrics.riskScore;
     console.log(
       `metricsStr: ${metricsStr}, taskName: ${taskName},riskScore: ${riskScore}, hookAddress: ${hookAddress}`,
     );

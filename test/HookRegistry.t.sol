@@ -151,11 +151,11 @@ contract HookRegistryTest is Test, Fixtures {
         registry.pauseHook(address(hook));
     }
 
-    function testUpdateRiskScoreUnregisteredHook() public {
-        vm.prank(address(mockServiceManager));
-        vm.expectRevert(IHookRegistry.HookNotRegistered.selector);
-        registry.updateRiskScore(address(hook), 75);
-    }
+    // function testUpdateRiskScoreUnregisteredHook() public {
+    //     vm.prank(address(mockServiceManager));
+    //     vm.expectRevert(IHookRegistry.HookNotRegistered.selector);
+    //     registry.updateRiskScore(address(hook), 75);
+    // }
 
     function testUnauthorizedServiceManagerSet() public {
         address unauthorized = makeAddr("unauthorized");

@@ -39,5 +39,7 @@ forge script script/Anvil.s.sol \
 
 npm run start:operator
 
-npm run start:traffic
+npm run start:traffic <hookaddress>
 ```
+
+npm run start:traffic 0xf04EBDe029c221173755e08B35094660b994C0c0
