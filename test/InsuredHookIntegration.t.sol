@@ -6,8 +6,10 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {InsuredHook} from "../src/InsuredHook.sol";
 import {HookRegistry} from "../src/HookRegistry.sol";
 import {InsuranceVault} from "../src/InsuranceVault.sol";
+import {BrevisHandler} from "../src/BrevisHandler.sol";
 import {IInsuredHook} from "../src/interfaces/IInsuredHook.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
+import {MockBrevisRequest} from "./mock/MockBrevisRequest.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {Fixtures} from "./utils/Fixtures.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -20,6 +22,9 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
     HookRegistry public registry;
     InsuranceVault public vault;
     MockServiceManager public mockServiceManager;
+    BrevisHandler brevisHandler;
+    MockBrevisRequest mockBrevisRequest;
+
     MockERC20 public usdc;
     MockERC20 public uni;
     PoolId public poolId;
@@ -34,6 +39,8 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
     uint256 constant HOOK_DEPOSIT = 10_000 * 1e6; // 10,000 USDC
     uint256 constant UNI_STAKE = 1_000 * 1e18; // 1,000 UNI
 
+    bytes circuitOutput;
+
     event HookRegistered(address indexed hook, address indexed developer, uint256 deposit);
     event HookActivated(address indexed hook);
     event UNIStaked(address indexed staker, uint256 amount);
@@ -42,6 +49,8 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
     event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook, PoolId poolId);
     event VoteCast(uint256 indexed proposalId, address indexed voter, uint256 weight);
     event ProposalExecuted(uint256 indexed proposalId, bool passed);
+
+    bytes32 vkHash = 0x1234000000000000000000000000000000000000000000000000000000000000;
 
     function setUp() public {
         // Setup accounts
@@ -95,6 +104,10 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         vm.startPrank(uniStaker2);
         uni.approve(address(vault), type(uint256).max);
         vm.stopPrank();
+
+        // Setup BrevisHandler
+        brevisHandler = new BrevisHandler(address(mockBrevisRequest), address(vault));
+        brevisHandler.setVkHash(vkHash); // Set a dummy vkHash
     }
 
     function test_HookRegistrationFlow() public {
@@ -170,7 +183,6 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         // Pause hook
         vm.startPrank(address(mockServiceManager));
         registry.updateRiskScore(address(hook), 80);
-        registry.pauseHook(address(hook));
         vm.stopPrank();
 
         // Create insolvency proposal
@@ -184,6 +196,21 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
 
         vm.startPrank(uniStaker2);
         vault.castVote(proposalId);
+        vm.stopPrank();
+
+        // step for BrevisHandler
+        // dummy exploted user data
+        address[] memory victims = new address[](1);
+        address[] memory hooks = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+
+        victims[0] = address(this);
+        hooks[0] = address(hook);
+        amounts[0] = 10;
+
+        circuitOutput = abi.encodePacked(bytes20(victims[0]), bytes20(hooks[0]), bytes32(amounts[0]));
+        vm.startPrank(address(mockBrevisRequest));
+        brevisHandler.brevisCallback(vkHash, circuitOutput);
         vm.stopPrank();
 
         // Execute proposal

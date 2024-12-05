@@ -184,7 +184,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         proposal.executed = true;
         proposal.passed = true;
 
-        _processCompensation(proposal.hook, proposal.poolId);
+        _processCompensation(proposal.hook);
 
         emit ProposalExecuted(proposalId, true);
     }
@@ -200,7 +200,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         emit ProposalCancelled(proposalId);
     }
 
-    function _processCompensation(address hook, PoolId poolId) internal {
+    function _processCompensation(address hook) internal {
         require(registeredHooks[hook], "Hook not registered");
 
         // First Layer: Initial Deposit
@@ -222,7 +222,62 @@ contract InsuranceVault is IInsuranceVault, Ownable {
             insuranceFees[hook] = 0;
         }
 
-        emit CompensationProcessed(hook, poolId, totalCompensation);
+        emit CompensationProcessed(hook, totalCompensation);
+    }
+
+    // Struct for brevis
+    struct Victim {
+        address victim;
+        address hook;
+        uint256 amount;
+        bool processed;
+    }
+
+    mapping(address => Victim) public victimDatas;
+
+    // need to impl modifier for brevis
+    function setVictims(address[] calldata victims, address[] calldata hooks, uint256[] calldata amounts) external {
+        require(victims.length == hooks.length && victims.length == amounts.length, "Invalid input lengths");
+
+        for (uint256 i = 0; i < victims.length; i++) {
+            require(victims[i] != address(0), "Invalid victim address");
+            require(hooks[i] != address(0), "Invalid hook address");
+            require(amounts[i] > 0, "Invalid amount");
+
+            victimDatas[victims[i]] = Victim({victim: victims[i], hook: hooks[i], amount: amounts[i], processed: false});
+
+            emit VictimRegistered(victims[i], hooks[i], amounts[i]);
+        }
+    }
+
+    function compensateVictims(address[] calldata victims) external {
+        require(victims.length > 0, "Empty victims array");
+        uint256 totalCompensation = 0;
+        uint256 processedCount = 0;
+
+        for (uint256 i = 0; i < victims.length; i++) {
+            Victim storage victimData = victimDatas[victims[i]];
+
+            require(victimData.victim != address(0), "Victim not registered");
+            require(!victimData.processed, "Compensation already processed");
+
+            uint256 compensationAmount = victimData.amount;
+            address hook = victimData.hook;
+
+            // Process the hook's compensation if needed
+            if (usdcBalances[hook] > 0 || insuranceFees[hook] > 0) {
+                _processCompensation(hook);
+            }
+
+            // Transfer compensation to victim
+            require(USDC.transfer(victims[i], compensationAmount), "Compensation transfer failed");
+
+            victimData.processed = true;
+            totalCompensation += compensationAmount;
+            processedCount++;
+
+            emit CompensationProcessed(victims[i], compensationAmount);
+        }
     }
 
     function _claimRewards(address staker) internal returns (uint256) {

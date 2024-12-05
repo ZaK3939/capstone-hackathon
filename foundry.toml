@@ -16,11 +16,11 @@ remappings = [
     "v4-periphery/=lib/v4-periphery/",
     "uniguard-avs/=lib/capstone-avs/",
     "solady/=lib/solady/src/",
-    # OpenZeppelinのremappingを明示的に指定
     "@openzeppelin/contracts/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/lib/eigenlayer-contracts/lib/openzeppelin-contracts/contracts/",
     "@openzeppelin-upgrades/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/lib/eigenlayer-contracts/lib/openzeppelin-contracts-upgradeable/",
     "@eigenlayer/=lib/eigenlayer-contracts/src/",
-    "@eigenlayer-middleware/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/"
+    "@eigenlayer-middleware/=lib/capstone-avs/contracts/lib/eigenlayer-middleware/",
+    "brevis/=lib/brevis-contracts/contracts/"
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

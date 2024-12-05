@@ -36,11 +36,12 @@ interface IInsuranceVault {
     event HookRegistered(address indexed hook);
     event USDCDeposited(address indexed hook, uint256 amount);
     event UNIStaked(address indexed staker, uint256 amount);
-    event CompensationProcessed(address indexed hook, PoolId indexed poolId, uint256 totalAmount);
+    event CompensationProcessed(address indexed hook, uint256 totalAmount);
     event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook, PoolId poolId);
     event VoteCast(uint256 indexed proposalId, address indexed voter, uint256 weight);
     event ProposalExecuted(uint256 indexed proposalId, bool passed);
     event ProposalCancelled(uint256 indexed proposalId);
+    event VictimRegistered(address indexed victim, address indexed hook, uint256 amount);
 
     // Hook Registration
     function registerHook(address hook) external;
@@ -63,6 +64,7 @@ interface IInsuranceVault {
     function proposeInsolvency(address hook, PoolId poolId) external returns (uint256);
     function castVote(uint256 proposalId) external;
     function cancelProposal(uint256 proposalId) external;
+    function setVictims(address[] memory victims, address[] memory hooks, uint256[] memory amounts) external;
 
     // View Functions
     function getProposal(uint256 proposalId)
