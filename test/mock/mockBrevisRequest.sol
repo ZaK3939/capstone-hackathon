@@ -22,14 +22,10 @@ contract MockBrevisRequest is IBrevisRequest {
         emit RequestSent(_proofId, _nonce, _refundee, msg.value, _callback, _option);
     }
 
-    function fulfillRequest(
-        bytes32 _proofId,
-        uint64 _nonce,
-        uint64 _chainId,
-        bytes calldata _proof,
-        bytes calldata _appCircuitOutput,
-        address _callbackTarget
-    ) external override {
+    function fulfillRequest(bytes32 _proofId, uint64 _nonce, uint64, bytes calldata, bytes calldata, address)
+        external
+        override
+    {
         requests[_proofId][_nonce] = RequestStatus.ZkAttested;
         emit RequestFulfilled(_proofId, _nonce);
     }
@@ -37,11 +33,11 @@ contract MockBrevisRequest is IBrevisRequest {
     function fulfillRequests(
         bytes32[] calldata _proofIds,
         uint64[] calldata _nonces,
-        uint64 _chainId,
-        bytes calldata _proof,
-        Brevis.ProofData[] calldata _proofDataArray,
-        bytes[] calldata _appCircuitOutputs,
-        address[] calldata _callbackTargets
+        uint64,
+        bytes calldata,
+        Brevis.ProofData[] calldata,
+        bytes[] calldata,
+        address[] calldata
     ) external override {
         for (uint256 i = 0; i < _proofIds.length; i++) {
             requests[_proofIds[i]][_nonces[i]] = RequestStatus.ZkAttested;
@@ -54,8 +50,8 @@ contract MockBrevisRequest is IBrevisRequest {
         uint64[] calldata _nonces,
         bytes32[] calldata _appCommitHashes,
         bytes32[] calldata _appVkHashes,
-        IBvnSigsVerifier.SigInfo calldata _bvnSigInfo,
-        IAvsSigsVerifier.SigInfo calldata _eigenSigInfo
+        IBvnSigsVerifier.SigInfo calldata,
+        IAvsSigsVerifier.SigInfo calldata
     ) external override {
         for (uint256 i = 0; i < _proofIds.length; i++) {
             requests[_proofIds[i]][_nonces[i]] = RequestStatus.ZkAttested;
@@ -63,12 +59,12 @@ contract MockBrevisRequest is IBrevisRequest {
         emit OpRequestsFulfilled(_proofIds, _nonces, _appCommitHashes, _appVkHashes);
     }
 
-    function refund(bytes32 _proofId, uint64 _nonce, uint256 _amount, address _refundee) external override {
+    function refund(bytes32 _proofId, uint64 _nonce, uint256, address) external override {
         requests[_proofId][_nonce] = RequestStatus.Refunded;
         emit RequestRefunded(_proofId, _nonce);
     }
 
-    function increaseGasFee(bytes32 _proofId, uint64 _nonce, uint64 _addGas, uint256 _currentFee, address _refundee)
+    function increaseGasFee(bytes32 _proofId, uint64 _nonce, uint64 _addGas, uint256, address)
         external
         payable
         override
@@ -85,7 +81,7 @@ contract MockBrevisRequest is IBrevisRequest {
         return (requests[_proofId][_nonce], options[_proofId][_nonce]);
     }
 
-    function queryRequestStatus(bytes32 _proofId, uint64 _nonce, uint256 _appChallengeWindow)
+    function queryRequestStatus(bytes32 _proofId, uint64 _nonce, uint256)
         external
         view
         override
@@ -94,35 +90,27 @@ contract MockBrevisRequest is IBrevisRequest {
         return (requests[_proofId][_nonce], options[_proofId][_nonce]);
     }
 
-    function validateOpAppData(
-        bytes32 _proofId,
-        uint64 _nonce,
-        bytes32 _appCommitHash,
-        bytes32 _appVkHash,
-        uint8 _option
-    ) external view override returns (bool) {
+    function validateOpAppData(bytes32, uint64, bytes32, bytes32, uint8) external pure override returns (bool) {
+        return true;
+    }
+
+    function validateOpAppData(bytes32, uint64, bytes32, bytes32, uint256, uint8)
+        external
+        pure
+        override
+        returns (bool)
+    {
         return true;
     }
 
     function validateOpAppData(
-        bytes32 _proofId,
-        uint64 _nonce,
-        bytes32 _appCommitHash,
-        bytes32 _appVkHash,
-        uint256 _appChallengeWindow,
-        uint8 _option
-    ) external view override returns (bool) {
-        return true;
-    }
-
-    function validateOpAppData(
-        bytes32[] calldata _proofIds,
-        uint64[] calldata _nonces,
-        bytes32[] calldata _appCommitHashes,
-        bytes32[] calldata _appVkHashes,
-        uint256 _appChallengeWindow,
-        uint8 _option
-    ) external view override returns (bool) {
+        bytes32[] calldata,
+        uint64[] calldata,
+        bytes32[] calldata,
+        bytes32[] calldata,
+        uint256,
+        uint8
+    ) external pure override returns (bool) {
         return true;
     }
 

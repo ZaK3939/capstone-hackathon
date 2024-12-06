@@ -77,22 +77,19 @@ contract CounterScript is Script, DeployPermit2 {
         console.log("InsuredHook address: %s", address(hook));
         require(address(hook) == hookAddress, "CounterScript: hook address mismatch");
 
-        // トークンの初期設定
         usdc.mint(msg.sender, 100_000 * 1e6);
         usdc.approve(address(registry), type(uint256).max);
         usdc.approve(address(vault), type(uint256).max);
         uint256 depositAmount = 10_000 * 1e6;
         registry.registerHook(address(hook), depositAmount);
 
-        // 追加のヘルパーデプロイ
         IPositionManager posm = deployPosm(manager);
         (PoolModifyLiquidityTest lpRouter, PoolSwapTest swapRouter,) = deployRouters(manager);
 
-        // テストライフサイクルの実行
         console2.log("Testing lifecycle");
         testLifecycle(manager, address(hook), posm, lpRouter, swapRouter);
 
-        vm.stopBroadcast(); // 単一のブロードキャストブロックを終了
+        vm.stopBroadcast();
     }
 
     function deployPoolManager() internal returns (IPoolManager) {

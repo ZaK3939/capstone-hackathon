@@ -140,11 +140,12 @@ anvil
 
 npm run build
 
+## AVS cores
 npm run deploy:core
 
+## ServiceManager
 npm run deploy:avs
 
-# in a new terminal
 forge script script/Anvil.s.sol \
     --rpc-url http://localhost:8545 \
     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
@@ -160,7 +161,7 @@ npm run start:operator
 npm run start:traffic <hookaddress>
 ```
 
-npm run start:traffic 0xf04EBDe029c221173755e08B35094660b994C0c0
+npm run start:traffic 0x309F75134e9e3E901f3dF77B13cFD666EA5780c0
 
 ## Detail
 

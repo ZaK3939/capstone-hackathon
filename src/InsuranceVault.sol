@@ -165,7 +165,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         uint256 proposalId = proposalCount++;
         InsolvencyProposal storage proposal = proposals[proposalId];
         proposal.hook = hook;
-        proposal.totalStake = _getTotalHookStake(hook);
+        proposal.totalStake = _getTotalHookStake();
         console2.log("proposaled hook", hook);
         emit InsolvencyProposalCreated(proposalId, hook);
         return proposalId;
@@ -305,7 +305,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         return stakerShare - info.rewardDebt;
     }
 
-    function _getTotalHookStake(address hook) internal view returns (uint256) {
+    function _getTotalHookStake() internal view returns (uint256) {
         return vaultInfo.totalUNIStaked;
     }
 
