@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 interface IInsuranceVault {
@@ -20,7 +19,6 @@ interface IInsuranceVault {
 
     struct InsolvencyProposal {
         address hook;
-        PoolId poolId;
         uint256 forVotes;
         uint256 totalStake;
         bool executed;
@@ -37,7 +35,7 @@ interface IInsuranceVault {
     event USDCDeposited(address indexed hook, uint256 amount);
     event UNIStaked(address indexed staker, uint256 amount);
     event CompensationProcessed(address indexed hook, uint256 totalAmount);
-    event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook, PoolId poolId);
+    event InsolvencyProposalCreated(uint256 indexed proposalId, address indexed hook);
     event VoteCast(uint256 indexed proposalId, address indexed voter, uint256 weight);
     event ProposalExecuted(uint256 indexed proposalId, bool passed);
     event ProposalCancelled(uint256 indexed proposalId);
@@ -61,7 +59,7 @@ interface IInsuranceVault {
     function claimRewards() external returns (uint256);
 
     // Insolvency Proposal
-    function proposeInsolvency(address hook, PoolId poolId) external returns (uint256);
+    function proposeInsolvency(address hook) external returns (uint256);
     function castVote(uint256 proposalId) external;
     function cancelProposal(uint256 proposalId) external;
     function setVictims(address[] memory victims, address[] memory hooks, uint256[] memory amounts) external;
@@ -70,7 +68,7 @@ interface IInsuranceVault {
     function getProposal(uint256 proposalId)
         external
         view
-        returns (address hook, PoolId poolId, uint256 forVotes, uint256 totalStake, bool executed, bool passed);
+        returns (address hook, uint256 forVotes, uint256 totalStake, bool executed, bool passed);
     function getVaultInfo() external view returns (VaultInfo memory);
     function getDepositedAmount(address hook) external view returns (uint256);
     function getStakeInfo(address user) external view returns (StakeInfo memory);

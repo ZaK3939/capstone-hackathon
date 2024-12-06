@@ -16,6 +16,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {UniGuardServiceManager} from "uniguard-avs/contracts/src/UniGuardServiceManager.sol";
 import {MockServiceManager} from "./mock/MockServiceManager.sol";
+import {console2} from "forge-std/Console2.sol";
 
 contract InsuredHookIntegrationTest is Test, Fixtures {
     InsuredHook public hook;
@@ -32,6 +33,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
     address public developer;
     address public uniStaker;
     address public uniStaker2;
+    address public victim1;
     address public operator;
 
     uint256 constant INITIAL_USDC = 100_000 * 1e6; // 100,000 USDC
@@ -57,6 +59,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         developer = makeAddr("developer");
         uniStaker = makeAddr("uniStaker");
         uniStaker2 = makeAddr("uniStaker2");
+        victim1 = makeAddr("victim1");
         operator = makeAddr("operator");
 
         // Deploy mock tokens
@@ -187,7 +190,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
 
         // Create insolvency proposal
         vm.startPrank(address(registry));
-        uint256 proposalId = vault.proposeInsolvency(address(hook), poolId);
+        uint256 proposalId = vault.proposeInsolvency(address(hook));
 
         // Vote on proposal
         vm.startPrank(uniStaker);
@@ -198,13 +201,13 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         vault.castVote(proposalId);
         vm.stopPrank();
 
-        // step for BrevisHandler
-        // dummy exploted user data
+        // Set up victim data through Brevis
         address[] memory victims = new address[](1);
         address[] memory hooks = new address[](1);
         uint256[] memory amounts = new uint256[](1);
 
-        victims[0] = address(this);
+        victims[0] = address(victim1);
+        console2.log("Victim address: ", victims[0]);
         hooks[0] = address(hook);
         amounts[0] = 10;
 
@@ -218,12 +221,28 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         vault.executeProposal(proposalId);
 
         // Verify proposal state
-        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        (,,, bool executed, bool passed) = vault.getProposal(proposalId);
         assertTrue(executed);
         assertTrue(passed);
 
         // Verify compensation effects
         assertTrue(vault.usdcBalances(address(hook)) < HOOK_DEPOSIT);
+
+        // Verify proposal is recorded for the hook
+        assertEq(vault.hookToProposalId(address(hook)), proposalId);
+
+        // Test victim compensation
+        uint256 initialBalance = usdc.balanceOf(address(victim1));
+
+        vault.compensateVictim(victims[0]);
+
+        // Verify victim compensation
+        assertEq(usdc.balanceOf(address(victim1)), initialBalance + 10);
+
+        // Verify victim data is marked as processed
+        (,,, bool processed) = vault.victimDatas(address(victim1));
+        assertTrue(processed);
+
         vm.stopPrank();
     }
 
@@ -241,12 +260,11 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         // Risk Detection and Pause
         vm.startPrank(address(mockServiceManager));
         registry.updateRiskScore(address(hook), 80);
-        registry.pauseHook(address(hook));
         vm.stopPrank();
 
         // Insolvency Handling
         vm.startPrank(address(registry));
-        uint256 proposalId = vault.proposeInsolvency(address(hook), poolId);
+        uint256 proposalId = vault.proposeInsolvency(address(hook));
 
         // Voting
         vm.startPrank(uniStaker);
@@ -267,7 +285,7 @@ contract InsuredHookIntegrationTest is Test, Fixtures {
         assertFalse(isActive);
 
         // Verify proposal state
-        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        (,,, bool executed, bool passed) = vault.getProposal(proposalId);
         assertTrue(executed);
         assertTrue(passed);
     }

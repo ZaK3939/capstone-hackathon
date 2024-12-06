@@ -6,12 +6,21 @@ import {IInsuranceVault} from "./interfaces/IInsuranceVault.sol";
 import {IHookRegistry} from "./interfaces/IHookRegistry.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {console2} from "forge-std/Console2.sol";
 
 contract InsuranceVault is IInsuranceVault, Ownable {
     // State variables
     IHookRegistry public immutable registry;
     IERC20 public immutable USDC;
     IERC20 public immutable UNI;
+    // Struct for brevis
+
+    struct Victim {
+        address victim;
+        address hook;
+        uint256 amount;
+        bool processed;
+    }
 
     // Morpho mock state
     uint256 public morphoBalance;
@@ -24,6 +33,8 @@ contract InsuranceVault is IInsuranceVault, Ownable {
     mapping(address => bool) public registeredHooks; // hook => isRegistered
     mapping(address => mapping(address => uint256)) public hookStakes; // hook => staker => amount
     mapping(address => uint256) public insuranceFees; // hook => accumulated insurance fees
+    mapping(address => uint256) public hookToProposalId; // hook => proposalId
+    mapping(address => Victim) public victimDatas; // hook => victim data
     VaultInfo public vaultInfo;
 
     uint256 public constant VOTE_THRESHOLD_PERCENTAGE = 51; // 51% of total stake required to pass proposal
@@ -39,6 +50,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         USDC = IERC20(_usdc);
         UNI = IERC20(_uni);
         _transferOwnership(msg.sender);
+        proposalCount = 1;
     }
 
     // Hook Registration
@@ -145,7 +157,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
     }
 
     // Insolvency Proposal
-    function proposeInsolvency(address hook, PoolId poolId) external returns (uint256) {
+    function proposeInsolvency(address hook) external returns (uint256) {
         require(msg.sender == address(registry), "Only registry can propose");
         require(registeredHooks[hook], "Hook not registered");
         require(registry.isHookPaused(hook), "Hook must be paused");
@@ -153,10 +165,9 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         uint256 proposalId = proposalCount++;
         InsolvencyProposal storage proposal = proposals[proposalId];
         proposal.hook = hook;
-        proposal.poolId = poolId;
         proposal.totalStake = _getTotalHookStake(hook);
-
-        emit InsolvencyProposalCreated(proposalId, hook, poolId);
+        console2.log("proposaled hook", hook);
+        emit InsolvencyProposalCreated(proposalId, hook);
         return proposalId;
     }
 
@@ -184,7 +195,10 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         proposal.executed = true;
         proposal.passed = true;
 
-        _processCompensation(proposal.hook);
+        _processCompensationPrepare(proposal.hook);
+        console2.log("proposal.hook in execute", proposal.hook);
+        console2.log("proposalId in execute", proposalId);
+        hookToProposalId[proposal.hook] = proposalId;
 
         emit ProposalExecuted(proposalId, true);
     }
@@ -200,7 +214,7 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         emit ProposalCancelled(proposalId);
     }
 
-    function _processCompensation(address hook) internal {
+    function _processCompensationPrepare(address hook) internal {
         require(registeredHooks[hook], "Hook not registered");
 
         // First Layer: Initial Deposit
@@ -225,16 +239,6 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         emit CompensationProcessed(hook, totalCompensation);
     }
 
-    // Struct for brevis
-    struct Victim {
-        address victim;
-        address hook;
-        uint256 amount;
-        bool processed;
-    }
-
-    mapping(address => Victim) public victimDatas;
-
     // need to impl modifier for brevis
     function setVictims(address[] calldata victims, address[] calldata hooks, uint256[] calldata amounts) external {
         require(victims.length == hooks.length && victims.length == amounts.length, "Invalid input lengths");
@@ -250,34 +254,28 @@ contract InsuranceVault is IInsuranceVault, Ownable {
         }
     }
 
-    function compensateVictims(address[] calldata victims) external {
-        require(victims.length > 0, "Empty victims array");
-        uint256 totalCompensation = 0;
-        uint256 processedCount = 0;
+    function compensateVictim(address victim) external {
+        Victim storage victimData = victimDatas[victim];
+        console2.log("victimData.victim", victimData.victim);
+        console2.log("victimData.hook", victimData.hook);
+        require(victimData.victim != address(0), "Victim not registered");
+        require(!victimData.processed, "Compensation already processed");
 
-        for (uint256 i = 0; i < victims.length; i++) {
-            Victim storage victimData = victimDatas[victims[i]];
+        address hook = victimData.hook;
+        // Check if there's an approved proposal for this hook
+        console2.log("hookToProposalId[hook]", hookToProposalId[hook]);
+        console2.log("proposals[hookToProposalId[hook]].passed", proposals[hookToProposalId[hook]].passed);
+        require(hookToProposalId[hook] != 0, "No approved proposal for hook");
+        require(proposals[hookToProposalId[hook]].passed, "Proposal not passed");
 
-            require(victimData.victim != address(0), "Victim not registered");
-            require(!victimData.processed, "Compensation already processed");
+        uint256 compensationAmount = victimData.amount;
 
-            uint256 compensationAmount = victimData.amount;
-            address hook = victimData.hook;
+        // Transfer compensation to victim
+        require(USDC.transfer(victim, compensationAmount), "Compensation transfer failed");
 
-            // Process the hook's compensation if needed
-            if (usdcBalances[hook] > 0 || insuranceFees[hook] > 0) {
-                _processCompensation(hook);
-            }
+        victimData.processed = true;
 
-            // Transfer compensation to victim
-            require(USDC.transfer(victims[i], compensationAmount), "Compensation transfer failed");
-
-            victimData.processed = true;
-            totalCompensation += compensationAmount;
-            processedCount++;
-
-            emit CompensationProcessed(victims[i], compensationAmount);
-        }
+        emit CompensationProcessed(victim, compensationAmount);
     }
 
     function _claimRewards(address staker) internal returns (uint256) {
@@ -315,11 +313,10 @@ contract InsuranceVault is IInsuranceVault, Ownable {
     function getProposal(uint256 proposalId)
         external
         view
-        returns (address hook, PoolId poolId, uint256 forVotes, uint256 totalStake, bool executed, bool passed)
+        returns (address hook, uint256 forVotes, uint256 totalStake, bool executed, bool passed)
     {
         InsolvencyProposal storage proposal = proposals[proposalId];
-        return
-            (proposal.hook, proposal.poolId, proposal.forVotes, proposal.totalStake, proposal.executed, proposal.passed);
+        return (proposal.hook, proposal.forVotes, proposal.totalStake, proposal.executed, proposal.passed);
     }
 
     function getVaultInfo() external view returns (VaultInfo memory) {

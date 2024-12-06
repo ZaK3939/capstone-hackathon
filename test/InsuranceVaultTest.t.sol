@@ -119,8 +119,7 @@ contract InsuranceVaultTest is Test {
 
         // Create proposal
         vm.prank(registry);
-        PoolId poolId = PoolId.wrap(bytes32(uint256(1)));
-        uint256 proposalId = vault.proposeInsolvency(hook, poolId);
+        uint256 proposalId = vault.proposeInsolvency(hook);
 
         // Cast votes
         vm.prank(staker);
@@ -133,7 +132,7 @@ contract InsuranceVaultTest is Test {
         vault.executeProposal(proposalId);
 
         // Verify proposal execution
-        (,,,, bool executed, bool passed) = vault.getProposal(proposalId);
+        (,,, bool executed, bool passed) = vault.getProposal(proposalId);
         assertTrue(executed);
         assertTrue(passed);
     }

@@ -17,13 +17,16 @@ contract BrevisHandler is BrevisApp, Ownable {
         _transferOwnership(msg.sender);
     }
 
-    function handleProofResult(bytes32, /*_requestId*/ bytes32 _vkHash, bytes calldata _circuitOutput) internal {
+    function handleProofResult(bytes32 _vkHash, bytes calldata _circuitOutput) internal override {
         require(vkHash == _vkHash, "invalid vk");
 
         (address[] memory users, address[] memory hooks, uint256[] memory amounts) = decodeOutput(_circuitOutput);
+        console.log("######Setting victims####");
+        console.logUint(users.length);
         console.logAddress(users[0]);
         console.logAddress(hooks[0]);
         console.logUint(amounts[0]);
+
         insuranceVault.setVictims(users, hooks, amounts);
     }
 
@@ -36,20 +39,20 @@ contract BrevisHandler is BrevisApp, Ownable {
         uint256 recordLength = 72;
         uint256 numberOfRecords = o.length / recordLength;
 
-        address[] memory users = new address[](numberOfRecords);
-        address[] memory currencies = new address[](numberOfRecords);
+        address[] memory victims = new address[](numberOfRecords);
+        address[] memory hooks = new address[](numberOfRecords);
         uint256[] memory amounts = new uint256[](numberOfRecords);
 
         uint256 offset = 0;
 
         for (uint256 i = 0; i < numberOfRecords; i++) {
-            users[i] = address(bytes20(o[offset:offset + 20]));
-            currencies[i] = address(bytes20(o[offset + 20:offset + 40]));
+            victims[i] = address(bytes20(o[offset:offset + 20]));
+            hooks[i] = address(bytes20(o[offset + 20:offset + 40]));
             amounts[i] = bytesToUint256(o[offset + 40:offset + 72]);
             offset += recordLength;
         }
 
-        return (users, currencies, amounts);
+        return (victims, hooks, amounts);
     }
 
     function bytesToUint256(bytes memory b) internal pure returns (uint256) {
