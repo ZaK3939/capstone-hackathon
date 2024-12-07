@@ -31,7 +31,7 @@ UniGuard implements a multi-layered security system
 - Developer deposits in USDC
 - Staker incentives Fee
 
-![Benefit](./Benefits.png)
+![Benefit](./benefits.png)
 
 ### Core Components
 
@@ -83,26 +83,26 @@ stake tokens as part of the risk assessment process.
 
 ## Test Scenarios
 
-1. Hook Registration
+1. Hook Registration Test (test_HookRegistrationFlow())
 
    - Developers can register their hooks by providing a USDC deposit
    - Registration requires a deposit of 10,000 USDC
    - System validates registration details and deposit amounts
 
-2. UNI Token Staking
+2. UNI Staking Test (test_UniStakingFlow())
 
    - UNI token holders can stake their tokens against specific hooks
    - Staking amount is set to 1,000 UNI per staker
    - System tracks staking balances and hook-specific stakes
 
-3. Risk Monitoring and Hook Pausing
+3. Risk Monitoring Test (test_RiskMonitoringAndPauseFlow())
 
    - Service manager monitors hook risk levels
    - Can update risk scores (0-100)
    - High risk scores trigger hook pausing
    - Paused hooks are prevented from further operations
 
-4. Insolvency and Compensation Process
+4. Insolvency Process Test (test_InsolvencyFlow())
 
    - System can create insolvency proposals for compromised hooks
    - UNI stakers can vote on insolvency proposals
@@ -115,7 +115,7 @@ stake tokens as part of the risk assessment process.
      - Approved proposal for the corresponding hook
      - Unprocessed compensation status
 
-5. Complete Lifecycle Testing
+5. Complete Lifecycle Test (test_CompleteLifecycle())
    - Validates the entire flow from registration to compensation
    - Tests integration between all system components
    - Verifies state transitions and access controls
